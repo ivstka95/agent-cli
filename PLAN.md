@@ -167,13 +167,55 @@ English" profile vs a "detailed, Russian" profile on the SAME task (secure-stora
 differ in style/format/language, showing the profile is applied automatically.
 
 ### Step 3 — Day 13: Task state machine  [HEAVIEST]
-- `TaskState` enum: PLANNING, EXECUTION, VALIDATION, DONE.
-- `StagePrompts`: a distinct system prompt per stage (agent behaves differently per stage).
-- `Orchestrator`: drives the task; the agent signals "stage complete" in the structured reply.
-- `StageController` interface (swarm hook) + `SingleAgentController` (variant A — one agent,
-  different prompts).
-- Auto-transitions: DEFAULT AUTO (two-level validation above), CONFIRM flag.
-- Stage stored in the task file (`stage`), survives restart (pause/resume).
+**Task state (fields in the task file):**
+- `stage` — PLANNING / EXECUTION / VALIDATION / DONE.
+- `step` — the current step within the stage.
+- `expected_action` — what the system expects next.
+
+**Task structure (sections):** `## Goal` / `## Requirements` / `## Decisions` /
+`## Implementation` / `## Validation` / `## Done` / `## TODO`. Each stage produces its
+artifact section: planning → Requirements + Decisions, execution → Implementation,
+validation → Validation.
+
+**`StagePrompts`:** a distinct system prompt per stage, each containing (1) the stage
+behavior and (2) a demanding, checkable completion criterion the model uses to judge
+`stage_complete`. Criteria are content-specific and strict (don't accept hand-waving —
+e.g. planning is complete only when requirements are concrete, key decisions are made,
+and no blocking open questions remain).
+
+**Auto-transition mechanics:**
+- The combined structured call returns `stage_complete: boolean` (only whether the
+  CURRENT stage is complete — it does NOT propose the next stage).
+- The NEXT stage is determined by CODE from the transition table
+  (planning→execution→validation→done). The model never chooses the next stage — this
+  prevents skipping and invalid stages.
+- Two-level validation: **Level 1 (code, cheap, no tokens)** — is the edge legal
+  (`allowedTransitions`) AND is the current stage's artifact section non-empty?
+  **Level 2 (model)** — `stage_complete` judged against the stage criterion. A
+  transition happens only if the model says complete AND code confirms (legal +
+  artifact present).
+
+**Transition modes:**
+- `TransitionMode`: AUTO (default) / CONFIRM, toggled by `:mode auto` / `:mode confirm`.
+- AUTO: transition happens automatically after validation passes.
+- CONFIRM: when `stage_complete` is true, the code prompts the user to type `:next`; the
+  transition happens on `:next` (still validated). `:next` is the manual transition
+  force command.
+
+**Display (all from CODE, reliable — not from the model):**
+- REPL prints a `[stage: <stage> · step: <step>]` label with the agent's reply.
+- On a transition, REPL prints an explicit notice: `>>> Stage transition: <from> → <to>`.
+  (This same notice mechanism will show BLOCKED transitions in Day 15.)
+
+**Architecture:** `TaskState` enum; `StagePrompts`; `TaskStateMachine` (transition table +
+validation); `Orchestrator` (drives the task); `StageController` interface (swarm hook) +
+`SingleAgentController` (variant A — one agent, different prompts). Stage persists in the
+task file, surviving restart (pause/resume — reuses Day 11 persistence). The swarm
+(`MultiAgentController`) remains designed-for, NOT implemented.
+
+**Verify** (Day 13 requirements): stage drives behavior (different `StagePrompt` per
+stage); auto-transitions occur with validation; pause at any stage and resume without
+re-explaining (restart → stage persisted → continue). Demo on the secure-storage task.
 
 ### Step 4 — Day 14: Invariants
 - `invariants.md` — hard rules, separate from the dialog.
