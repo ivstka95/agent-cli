@@ -68,18 +68,11 @@ class Repl(
                     println("No such task: '$arg'. Use :task-list to see tasks.")
                 }
             }
-            ":task-list" -> {
-                val active = memory.working.activeTaskName()
-                val tasks = memory.working.listTasks()
-                if (tasks.isEmpty()) {
-                    println("No tasks yet. Create one with :task-new <name>.")
-                } else {
-                    tasks.forEach { name ->
-                        val marker = if (name == active) "* " else "  "
-                        println("$marker$name")
-                    }
-                }
-            }
+            ":task-list" -> printList(
+                memory.working.listTasks(),
+                memory.working.activeTaskName(),
+                "No tasks yet. Create one with :task-new <name>.",
+            )
             ":task-show" -> {
                 val content = memory.working.activeTaskContent()
                 if (content == null) {
@@ -96,6 +89,40 @@ class Repl(
                     println("Remembered.")
                 }
             }
+            ":profile-new" -> {
+                if (arg.isEmpty()) {
+                    println("Usage: :profile-new <name>")
+                } else {
+                    memory.longTerm.createProfile(arg)
+                    println("Created and switched to profile '$arg'.")
+                }
+            }
+            ":profile-switch" -> {
+                if (arg.isEmpty()) {
+                    println("Usage: :profile-switch <name>")
+                } else if (memory.longTerm.switchActiveProfile(arg)) {
+                    println("Active profile is now '$arg'.")
+                } else {
+                    println("No such profile: '$arg'. Use :profile-list to see profiles.")
+                }
+            }
+            ":profile-show" -> println(memory.longTerm.profile())
+            ":profile-set" -> {
+                val fieldParts = arg.split(" ", limit = 2)
+                val field = fieldParts[0]
+                val value = fieldParts.getOrNull(1)?.trim().orEmpty()
+                if (field.isEmpty() || value.isEmpty()) {
+                    println("Usage: :profile-set <field> <value>")
+                } else {
+                    memory.longTerm.setProfileField(field, value)
+                    println("Set $field.")
+                }
+            }
+            ":profile-list" -> printList(
+                memory.longTerm.listProfiles(),
+                memory.longTerm.activeProfileName(),
+                "No profiles yet. Create one with :profile-new <name>.",
+            )
             else -> println("Unknown command: $command. Type :help for the list.")
         }
         return false
@@ -120,6 +147,18 @@ class Repl(
         }
     }
 
+    /** Print a list of names with a `* ` marker on the active one (or an empty message). */
+    private fun printList(items: List<String>, active: String?, emptyMessage: String) {
+        if (items.isEmpty()) {
+            println(emptyMessage)
+        } else {
+            items.forEach { name ->
+                val marker = if (name == active) "* " else "  "
+                println("$marker$name")
+            }
+        }
+    }
+
     private fun printHelp() {
         println(
             """
@@ -129,6 +168,11 @@ class Repl(
             |  :task-list           list tasks (* = active)
             |  :task-show           print the active task file
             |  :remember <text>     append a line to long-term knowledge
+            |  :profile-new <name>     create an empty profile and make it active
+            |  :profile-switch <name>  switch the active profile
+            |  :profile-show           print the active profile
+            |  :profile-set <f> <v>    set a preference field (overwrites)
+            |  :profile-list           list profiles (* = active)
             |  :help                show this help
             |  :quit, :q            exit
             |Anything else is sent to the agent as a chat message.

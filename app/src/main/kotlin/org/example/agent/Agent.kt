@@ -44,7 +44,7 @@ class Agent(
     // The one place where the final system prompt is built. Days 11–15 compose it
     // here from layers, in this priority order:
     //   [Day 14] invariants (must never be violated)        — not implemented yet
-    //   [Day 12+11] long-term memory (profile + knowledge)  — below
+    //   [Day 12+11] long-term memory (active profile + knowledge) — below
     //   [Day 11]    working memory (active task context)     — below
     //   [Day 13]    current stage prompt                     — not implemented yet
     // Short-term memory (history) goes into the messages array, not here.
@@ -55,7 +55,10 @@ class Agent(
     private fun buildSystemPrompt(activeTask: String?): String = buildString {
         // [Day 14] Invariants would be prepended here, with highest priority.
 
-        // [Days 12 + 11] Long-term memory: profile + global knowledge.
+        // [Day 12] Personalization: the ACTIVE user profile (switchable via the
+        // :profile-* commands), injected automatically into every request.
+        // [Day 11] plus global knowledge. Days 13–14 (stage prompt, invariants)
+        // still plug into this same assembly point.
         appendLine("# User profile")
         appendLine(memory.longTerm.profile().trim())
         appendLine()

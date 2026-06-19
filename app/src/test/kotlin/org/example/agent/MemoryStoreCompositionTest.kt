@@ -46,8 +46,9 @@ class MemoryStoreCompositionTest {
 
     /** Seed long-term files with known markers BEFORE the store reads them. */
     private fun seedLongTerm() {
-        File(root, "long-term").mkdirs()
-        File(root, "long-term/profile.md").writeText("PROFILE_MARKER")
+        File(root, "long-term/profiles").mkdirs()
+        File(root, "long-term/profiles/seeded.md").writeText("# Profile: seeded\nPROFILE_MARKER")
+        File(root, "long-term/active-profile").writeText("seeded")
         File(root, "long-term/knowledge.md").writeText("KNOWLEDGE_MARKER")
     }
 
@@ -113,6 +114,34 @@ class MemoryStoreCompositionTest {
         // Then the task is unchanged and the flag is false
         assertFalse(response.taskUpdated)
         assertEquals(before, memory.working.activeTaskContent())
+    }
+
+    @Test
+    fun `switching the active profile changes which profile content is injected`() = runBlocking {
+        // Given two profiles with distinct markers
+        seedLongTerm()
+        val memory = MemoryStore(root)
+        memory.longTerm.createProfile("concise")
+        memory.longTerm.setProfileField("style", "CONCISE_MARKER")
+        memory.longTerm.createProfile("detailed")
+        memory.longTerm.setProfileField("style", "DETAILED_MARKER")
+
+        val fake = FakeResponseGenerator(GeneratedResponse("ok", taskUpdate = null, inputTokens = 1, outputTokens = 1))
+        val agent = Agent(fake, memory)
+
+        // When the active profile is "detailed"
+        memory.longTerm.switchActiveProfile("detailed")
+        agent.run("hi", history = emptyList())
+        // Then the detailed profile is injected, not the concise one
+        assertTrue(fake.receivedSystemPrompt!!.contains("DETAILED_MARKER"))
+        assertFalse(fake.receivedSystemPrompt!!.contains("CONCISE_MARKER"))
+
+        // When switching the active profile to "concise"
+        memory.longTerm.switchActiveProfile("concise")
+        agent.run("hi again", history = emptyList())
+        // Then the injected profile content changes accordingly
+        assertTrue(fake.receivedSystemPrompt!!.contains("CONCISE_MARKER"))
+        assertFalse(fake.receivedSystemPrompt!!.contains("DETAILED_MARKER"))
     }
 
     @Test
