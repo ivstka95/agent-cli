@@ -69,6 +69,31 @@ class WorkingMemory(private val dir: File) {
         taskFile(name).writeText(content)
     }
 
+    /**
+     * Set the active task's `stage:` field (Day 13). String-typed on purpose so
+     * this layer stays free of the `task` package — the caller (REPL) validates the
+     * value against the stage enum first. Replaces the existing `stage:` line, or
+     * inserts one right after the `# Task:` header for old/hand-edited files.
+     * @return true if updated, false if there is no active task.
+     */
+    fun setActiveStage(stageValue: String): Boolean {
+        val name = activeTaskName() ?: return false
+        val file = taskFile(name)
+        val lines = file.readText().lines().toMutableList()
+        val newLine = "stage: ${stageValue.trim()}"
+        val idx = lines.indexOfFirst { it.trimStart().startsWith("stage:") }
+        if (idx >= 0) {
+            lines[idx] = newLine
+        } else {
+            // No stage line (a hand-edited file): insert right after the `# Task:`
+            // header, or at the top if there is no header either.
+            val headerIdx = lines.indexOfFirst { it.trimStart().startsWith("# Task:") }
+            lines.add(maxOf(headerIdx + 1, 0), newLine)
+        }
+        file.writeText(lines.joinToString("\n"))
+        return true
+    }
+
     /** All task names (file stems), sorted. */
     fun listTasks(): List<String> =
         (tasksDir.listFiles { f -> f.isFile && f.name.endsWith(".md") } ?: emptyArray())
@@ -80,6 +105,8 @@ class WorkingMemory(private val dir: File) {
     private fun taskTemplate(name: String): String = """
         |# Task: $name
         |stage: planning
+        |step:
+        |expected_action:
         |
         |## Goal
         |
@@ -88,6 +115,12 @@ class WorkingMemory(private val dir: File) {
         |-
         |
         |## Decisions
+        |-
+        |
+        |## Implementation
+        |-
+        |
+        |## Validation
         |-
         |
         |## Done

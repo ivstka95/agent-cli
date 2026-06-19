@@ -4,6 +4,8 @@ import org.example.agent.Agent
 import org.example.agent.Message
 import org.example.agent.Role
 import org.example.memory.MemoryStore
+import org.example.task.TaskHeader
+import org.example.task.TaskState
 
 /**
  * Interactive read-eval-print loop.
@@ -81,6 +83,22 @@ class Repl(
                     println(content)
                 }
             }
+            ":stage" -> {
+                // Manually set the active task's stage so behavior across stages can
+                // be tested before auto-transitions exist (3b). Validation lives here
+                // (against the stage enum) so WorkingMemory stays string-typed.
+                val target = TaskState.parse(arg)
+                when {
+                    arg.isEmpty() ->
+                        println("Usage: :stage <planning|execution|validation|done>")
+                    target == null ->
+                        println("Invalid stage: '$arg'. Valid: planning, execution, validation, done.")
+                    memory.working.setActiveStage(target.stageValue) ->
+                        println("Stage set to ${target.stageValue}.")
+                    else ->
+                        println("No active task. Create one with :task-new <name>.")
+                }
+            }
             ":remember" -> {
                 if (arg.isEmpty()) {
                     println("Usage: :remember <text>")
@@ -137,6 +155,9 @@ class Repl(
             memory.shortTerm.add(Message(Role.ASSISTANT, response.replyText))
 
             println("Agent: ${response.replyText}")
+            // Stage label, built from CODE (the task file) after the call so a
+            // model-updated `step` is reflected. Reliable — not from the model.
+            stageLabel()?.let { println(it) }
             if (response.taskUpdated) {
                 println("  [working memory updated: ${memory.working.activeTaskName()}]")
             }
@@ -145,6 +166,18 @@ class Repl(
             // One bad call must not kill the REPL.
             println("Error: ${e.message}")
         }
+    }
+
+    /**
+     * The `[stage: <stage> · step: <step>]` label for the active task, or null if
+     * there is no active task. `step` is omitted when empty. Built from the task
+     * file by CODE so it stays reliable regardless of the model's output.
+     */
+    private fun stageLabel(): String? {
+        val content = memory.working.activeTaskContent() ?: return null
+        val header = TaskHeader.parse(content)
+        val step = if (header.step.isEmpty()) "" else " · step: ${header.step}"
+        return "  [stage: ${header.stage.stageValue}$step]"
     }
 
     /** Print a list of names with a `* ` marker on the active one (or an empty message). */
@@ -167,6 +200,7 @@ class Repl(
             |  :task-switch <name>  switch the active task
             |  :task-list           list tasks (* = active)
             |  :task-show           print the active task file
+            |  :stage <name>        set the active task's stage (planning/execution/validation/done)
             |  :remember <text>     append a line to long-term knowledge
             |  :profile-new <name>     create an empty profile and make it active
             |  :profile-switch <name>  switch the active profile

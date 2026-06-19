@@ -90,10 +90,15 @@ class CombinedResponseGenerator(private val llmClient: LlmClient) : ResponseGene
             Reply to the user and update the current task file. Provide two fields:
             - reply: your natural-language answer to the user.
             - task_update: the FULL task file markdown, preserving the exact structure
-              of the current task shown in the system prompt (same header, stage line,
-              and sections). Merge any new goal, requirements, decisions, done items,
-              or todos from this exchange into it. If nothing about the task changed,
-              return it unchanged. Do not invent content.
+              of the current task shown in the system prompt. Keep ALL header fields
+              (stage, step, expected_action) and ALL sections (## Goal, ## Requirements,
+              ## Decisions, ## Implementation, ## Validation, ## Done, ## TODO). Merge
+              what this exchange produced into the sections that the CURRENT stage is
+              responsible for — planning fills Requirements + Decisions, execution fills
+              Implementation, validation fills Validation — and keep step and
+              expected_action current for the work in progress. Do not change the stage
+              field yourself. If nothing about the task changed, return it unchanged. Do
+              not invent content.
         """.trimIndent()
 
         /** JSON Schema for the {reply, task_update} tool input (strict). */

@@ -1,6 +1,8 @@
 package org.example.agent
 
 import org.example.memory.MemoryStore
+import org.example.task.StagePrompts
+import org.example.task.TaskHeader
 
 /**
  * Core agent: encapsulates the request -> response cycle.
@@ -46,7 +48,7 @@ class Agent(
     //   [Day 14] invariants (must never be violated)        — not implemented yet
     //   [Day 12+11] long-term memory (active profile + knowledge) — below
     //   [Day 11]    working memory (active task context)     — below
-    //   [Day 13]    current stage prompt                     — not implemented yet
+    //   [Day 13]    current stage prompt                     — below (3a)
     // Short-term memory (history) goes into the messages array, not here.
     //
     // Do not scatter system-prompt construction elsewhere — everything plugs in
@@ -71,9 +73,17 @@ class Agent(
             appendLine("# Active task")
             appendLine(activeTask.trim())
             appendLine()
-        }
 
-        // [Day 13] The current stage prompt would be appended here.
+            // [Day 13 / 3a] Current stage prompt: the stage (parsed from the task
+            // file by CODE) selects a behavior fragment, so the same agent acts as a
+            // planner / executor / validator per stage. 3b adds auto-transitions
+            // here; Day 14 prepends invariants above. The stage only changes
+            // manually (`:stage`) for now.
+            val stage = TaskHeader.parse(activeTask).stage
+            appendLine("# Current stage: ${stage.stageValue}")
+            appendLine(StagePrompts.forStage(stage).trim())
+            appendLine()
+        }
 
         append(BASE_INSTRUCTION)
     }

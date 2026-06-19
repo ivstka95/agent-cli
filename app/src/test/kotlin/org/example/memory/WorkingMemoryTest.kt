@@ -32,11 +32,60 @@ class WorkingMemoryTest {
         val content = wm.activeTaskContent()!!
         assertTrue(content.startsWith("# Task: alpha"))
         assertTrue(content.contains("stage: planning"))
+        // Day 13 header fields
+        assertTrue(content.contains("step:"))
+        assertTrue(content.contains("expected_action:"))
         assertTrue(content.contains("## Goal"))
         assertTrue(content.contains("## Requirements"))
         assertTrue(content.contains("## Decisions"))
+        // Day 13 artifact sections
+        assertTrue(content.contains("## Implementation"))
+        assertTrue(content.contains("## Validation"))
         assertTrue(content.contains("## Done"))
         assertTrue(content.contains("## TODO"))
+    }
+
+    @Test
+    fun `setActiveStage updates the stage line and persists across a restart`() {
+        // Given a fresh active task (stage planning)
+        WorkingMemory(workingDir).apply {
+            createTask("alpha")
+
+            // When the stage is set
+            assertTrue(setActiveStage("execution"))
+
+            // Then the stage line is updated (and only one stage line exists)
+            val content = activeTaskContent()!!
+            assertTrue(content.contains("stage: execution"))
+            assertFalse(content.contains("stage: planning"))
+        }
+
+        // And it survives a restart (fresh instance over the same dir)
+        val reopened = WorkingMemory(workingDir)
+        assertTrue(reopened.activeTaskContent()!!.contains("stage: execution"))
+    }
+
+    @Test
+    fun `setActiveStage returns false when there is no active task`() {
+        val wm = WorkingMemory(workingDir)
+        assertFalse(wm.setActiveStage("execution"))
+    }
+
+    @Test
+    fun `setActiveStage works on an old-format file missing the new fields`() {
+        // Given a hand-written old Day 11 task file (no step / expected_action / new sections)
+        val wm = WorkingMemory(workingDir)
+        wm.createTask("legacy")
+        wm.overwriteActive("# Task: legacy\nstage: planning\n\n## Goal\nold\n")
+
+        // When the stage is changed
+        assertTrue(wm.setActiveStage("validation"))
+
+        // Then the stage line is replaced in place
+        val content = wm.activeTaskContent()!!
+        assertTrue(content.contains("stage: validation"))
+        assertFalse(content.contains("stage: planning"))
+        assertTrue(content.contains("## Goal"))
     }
 
     @Test
