@@ -25,9 +25,10 @@ See `PLAN.md` for the full step-by-step breakdown and all design hooks.
 
 ## Architecture (clean, layered)
 ```
-agent/      Agent (single system-prompt assembly point), Message, models, LlmClient interface
+agent/      Agent (single system-prompt assembly point), Message, models, LlmClient interface,
+            ResponseGenerator + CombinedResponseGenerator (depend only on LlmClient + strings)
 llm/        AnthropicClient — Ktor (CIO) implementation of LlmClient
-memory/     ShortTerm / Working / LongTerm / MemoryStore + ResponseGenerator abstraction   (Day 11)
+memory/     ShortTerm / Working / LongTerm / MemoryStore                                     (Day 11)
 profile/    Profile                                                                          (Day 12)
 task/       TaskState / StagePrompts / TaskStateMachine / Orchestrator / StageController      (Days 13/15)
 invariants/ InvariantStore / InvariantChecker                                                (Day 14)
@@ -49,7 +50,7 @@ short-term memory (history) → messages          (Day 11)
 Never scatter system-prompt construction. This single point is where every layer plugs in.
 
 ## Key design hooks (designed for the maximum, implement the minimum)
-- **`ResponseGenerator` interface** — `CombinedResponseGenerator` makes ONE structured-output call returning `{reply, task_update}` (auto-extraction into working memory). Swappable to a separate-call implementation without touching Agent/REPL. On JSON parse failure: fallback to raw reply, don't touch the task, never crash. Keep max_tokens high enough that the JSON isn't truncated.
+- **`ResponseGenerator` interface (in `agent/`)** — `CombinedResponseGenerator` makes ONE structured-output call returning `{reply, task_update}` (auto-extraction into working memory). It depends only on `LlmClient` and plain strings, never on the memory storage classes — the Agent connects it to `MemoryStore`, so dependencies stay one-directional. Swappable to a separate-call implementation without touching Agent/REPL. On JSON parse failure: fallback to raw reply, don't touch the task, never crash. Keep max_tokens high enough that the JSON isn't truncated.
 - **`StageController` interface** — `SingleAgentController` now; `MultiAgentController` (the swarm) later, without changing `Orchestrator`. Swarm is DESIGNED FOR, NOT implemented yet.
 - **`allowedTransitions` + `TransitionMode`** — transitions validated by code first (legal edge + artifact present), then LLM (real readiness). DEFAULT AUTO; CONFIRM optional.
 

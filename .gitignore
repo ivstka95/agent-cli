@@ -9,3 +9,7 @@ build
 
 # macOS Finder metadata
 .DS_Store
+
+# Agent memory store at the repo root (runtime state; never committed).
+# Root-anchored so it does NOT match the source package app/.../org/example/memory/.
+/memory/
