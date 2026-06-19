@@ -55,6 +55,10 @@ application {
 // Forward the terminal's stdin to the app so the interactive REPL can read input.
 // Without this, `gradle run` gives the app an empty stdin and the REPL exits at once.
 tasks.named<JavaExec>("run") {
+    // Run from the repo root so MemoryStore's File("memory") resolves to the
+    // project-root memory/ (matching the root-anchored /memory/ gitignore rule),
+    // not app/memory/ (the module dir, the application plugin's default).
+    workingDir = rootProject.projectDir
     standardInput = System.`in`
 }
 

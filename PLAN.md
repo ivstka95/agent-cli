@@ -65,10 +65,10 @@ stage: planning            # Day 13/15: a VALID state from the enum
 ## Code packages
 
 ```
-agent/      Agent (buildSystemPrompt = single assembly point), Message, models, LlmClient  [exists]
+agent/      Agent (buildSystemPrompt = single assembly point), Message, models, LlmClient,
+            ResponseGenerator (interface), CombinedResponseGenerator (variant A)  [exists]
 memory/     MemoryStore (facade), ShortTermMemory (in-memory),
-            WorkingMemory (tasks + active pointer), LongTermMemory (profile + knowledge),
-            ResponseGenerator (interface), CombinedResponseGenerator (variant A)
+            WorkingMemory (tasks + active pointer), LongTermMemory (profile + knowledge)
 profile/    Profile (Day 12)
 task/       TaskState (stage enum), StagePrompts (per-stage system prompt),
             TaskStateMachine (transitions + rules), Orchestrator (drives the task),
@@ -78,6 +78,11 @@ repl/       Repl (commands)  [exists, extended]
 Main.kt     [exists]
 llm/        AnthropicClient (Ktor)  [exists]
 ```
+
+The response generator lives in `agent/`, not `memory/`: it depends only on `LlmClient`
+and works with strings (`currentTask` in, `taskUpdate` out) — the Agent connects it to
+memory. This keeps dependencies one-directional (`agent → memory`, `agent → llm`;
+`memory` depends on nothing).
 
 ---
 
