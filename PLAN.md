@@ -128,10 +128,43 @@ Principle: code rejects clearly-invalid transitions for free; the LLM catches we
 - REPL: `:task-new`, `:task-switch`, `:task-list`, `:task-show`, `:remember`.
 
 ### Step 2 — Day 12: Personalization
-- `Profile` on top of long-term (`profile.md`): style, format, language, stack, constraints.
-- Injected into every request (into the prompt assembly).
-- Verify: different profiles → different answers. (Nearly free after Day 11.)
-- Let the user set/change the profile (command or manual file edit).
+**Storage:**
+- Multiple profiles in `memory/long-term/profiles/<name>.md` (free-form markdown).
+- An active-profile pointer file in `memory/long-term/` holds the active profile name
+  (persists across restart, like the working-memory `active` pointer).
+- The previously-stubbed `memory/long-term/profile.md` role is taken over by the active
+  profile from `profiles/` (a default profile is fine if none is active).
+
+**Profile content** (free-form markdown), fields stored as lines `- <field>: <value>`:
+```
+# Profile: <name>
+- style: concise
+- format: prose
+- language: English
+- stack: Kotlin, Android
+- constraints: prefer platform APIs, Clean Architecture
+```
+
+**REPL commands:**
+- `:profile-new <name>` — create a new EMPTY profile (just a `# Profile: <name>` header,
+  no preset fields), set it active. Empty-on-creation so filling it via commands is visible on demo.
+- `:profile-switch <name>` — set the active profile (writes the active-profile pointer).
+- `:profile-show` — print the active profile content.
+- `:profile-set <field> <value>` — set a preference FIELD, OVERWRITING if it exists.
+  Stored as a markdown line `- <field>: <value>`; finds the line starting with `- <field>:`
+  and replaces its value, or appends a new line if absent. One line per field (no duplicates).
+  E.g. `:profile-set style concise` then `:profile-set style detailed` → a single
+  `- style: detailed` line.
+- `:profile-list` — list available profiles (mark active).
+- Manual editing of `profiles/<name>.md` also works.
+
+**Assembly:** `buildSystemPrompt()` injects the ACTIVE profile content (via the active-profile
+pointer) into the long-term section, attached to every request automatically. The Day 11
+`knowledge.md` injection stays. Short-term/working/structured-call mechanics unchanged from Day 11.
+
+**Verify** (Day 12 requirement): different profiles → different answers. Demo: a "concise,
+English" profile vs a "detailed, Russian" profile on the SAME task (secure-storage); answers
+differ in style/format/language, showing the profile is applied automatically.
 
 ### Step 3 — Day 13: Task state machine  [HEAVIEST]
 - `TaskState` enum: PLANNING, EXECUTION, VALIDATION, DONE.
