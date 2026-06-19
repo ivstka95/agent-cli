@@ -89,6 +89,23 @@ class WorkingMemoryTest {
     }
 
     @Test
+    fun `overwriteActivePreservingStage keeps the persisted stage despite a stale one in the new content`() {
+        // Given an active task that CODE has advanced to validation
+        val wm = WorkingMemory(workingDir)
+        wm.createTask("demo")
+        wm.setActiveStage("validation")
+
+        // When new content arrives carrying a STALE stage line (execution)
+        wm.overwriteActivePreservingStage("# Task: demo\nstage: execution\n\n## Validation\n- A finding\n")
+
+        // Then the persisted stage stays validation (CODE-owned), but the body is applied
+        val content = wm.activeTaskContent()!!
+        assertTrue(content.contains("stage: validation"))
+        assertFalse(content.contains("stage: execution"))
+        assertTrue(content.contains("- A finding"))
+    }
+
+    @Test
     fun `creating a second task moves the active pointer`() {
         // Given a working memory with one task
         val wm = WorkingMemory(workingDir)

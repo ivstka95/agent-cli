@@ -195,6 +195,43 @@ and no blocking open questions remain).
   transition happens only if the model says complete AND code confirms (legal +
   artifact present).
 
+**Autonomous stage chain (3b):** After a user turn, the agent advances through stages
+AUTONOMOUSLY within that single turn — like a real agent (e.g. Claude Code) that doesn't stop
+to ask "should I continue?" between steps. The loop per user turn:
+- Call the agent on the current stage; apply its `task_update`.
+- If `stage_complete == true`:
+  - **Artifact ready** (Level 1: required sections non-empty) AND edge legal → transition
+    (CODE picks the next stage from the table; the model never picks it). Print
+    `>>> Stage transition: <from> → <to>`. If the new stage is DONE → **STOP** (task finished).
+    Otherwise **CONTINUE** the loop on the new stage (the agent immediately starts working the
+    next stage — no "shall we proceed?" turn).
+  - **Artifact NOT ready** → exactly ONE self-correction follow-up (print
+    `>>> Refining <stage> artifact before advancing...`, feed the model the empty-section
+    feedback — "You marked the stage complete, but the <section> section is empty. Fill it with
+    concrete content before the stage can advance." — apply its `task_update`, re-evaluate once).
+    If it becomes ready → transition and continue; if still not ready → **STOP** and return to
+    the user (stalled — needs input).
+- If `stage_complete == false` → the agent isn't done with this stage (e.g. it asked the user a
+  question / needs input) → **STOP** and return to the user.
+
+**Stop conditions** (where the autonomous chain ends and control returns to the user):
+- **DONE reached** — the task is complete.
+- **User input needed** — the model did not mark the stage complete (it's asking a question or
+  needs more from the user).
+- **Stalled** — the model marked the stage complete but the artifact isn't ready even after the
+  one self-correction (no progress → stop rather than loop).
+
+Between these stop conditions the agent proceeds through stages on its own. There is **no fixed
+per-turn transition cap** — the chain runs as far as genuine progress allows (each transition
+requires a real, code-verified artifact, so it cannot advance on empty stages). The chain cannot
+spin without progress: every loop iteration either advances on a ready artifact, stops for user
+input, stops at DONE, or stops stalled. (Optional manual interruption / convenience limits are
+NOT part of this; they can be added later if needed.)
+
+**Step-by-step display (pre-decided):** print as the chain runs — each stage's agent reply is
+printed, with `>>> Stage transition: <from> → <to>` between stages and `>>> Refining ...` before
+any self-correction reply, so the user sees progress in real time (not buffered to the end).
+
 **Transition modes:**
 - `TransitionMode`: AUTO (default) / CONFIRM, toggled by `:mode auto` / `:mode confirm`.
 - AUTO: transition happens automatically after validation passes.

@@ -1,6 +1,7 @@
 package org.example.repl
 
 import org.example.agent.Agent
+import org.example.agent.ChainStep
 import org.example.agent.Message
 import org.example.agent.Role
 import org.example.memory.MemoryStore
@@ -148,15 +149,16 @@ class Repl(
 
     private suspend fun chat(input: String) {
         try {
-            val response = agent.run(input, memory.shortTerm.history())
-            // Only record the turn once the call succeeds, so failed turns don't
-            // pollute the session history.
+            // [Day 13 / 3b] The agent runs an autonomous stage chain; print each step as
+            // it happens (real time, not buffered) via the callback.
+            val response = agent.run(input, memory.shortTerm.history()) { step -> printStep(step) }
+            // Only record the turn once it succeeds, so failed turns don't pollute the
+            // session history. The chain's replies collapse into one assistant turn.
             memory.shortTerm.add(Message(Role.USER, input))
-            memory.shortTerm.add(Message(Role.ASSISTANT, response.replyText))
+            memory.shortTerm.add(Message(Role.ASSISTANT, response.assistantText))
 
-            println("Agent: ${response.replyText}")
-            // Stage label, built from CODE (the task file) after the call so a
-            // model-updated `step` is reflected. Reliable — not from the model.
+            // Stage label (from CODE) + token totals at the END — the label reflects the
+            // FINAL stage the chain stopped on.
             stageLabel()?.let { println(it) }
             if (response.taskUpdated) {
                 println("  [working memory updated: ${memory.working.activeTaskName()}]")
@@ -165,6 +167,18 @@ class Repl(
         } catch (e: Exception) {
             // One bad call must not kill the REPL.
             println("Error: ${e.message}")
+        }
+    }
+
+    /** Print one chain step (from CODE): reply, then any refinement notice/reply, then any transition. */
+    private fun printStep(step: ChainStep) {
+        println("Agent: ${step.reply}")
+        step.refinement?.let { r ->
+            println(">>> Refining ${r.stage.stageValue} artifact before advancing...")
+            println("Agent: ${r.replyText}")
+        }
+        step.transition?.let { t ->
+            println(">>> Stage transition: ${t.from.stageValue} → ${t.to.stageValue}")
         }
     }
 

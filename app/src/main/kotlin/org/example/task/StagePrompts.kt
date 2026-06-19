@@ -25,11 +25,17 @@ object StagePrompts {
     }
 
     private val PLANNING = """
-        You are operating in the PLANNING stage of this task. Behave as a planner:
-        elicit and capture CONCRETE, testable requirements, make and record the key
-        technical decisions, and surface any open questions that block progress.
-        Write what you settle into the task's ## Requirements and ## Decisions
-        sections. Do not jump ahead to implementation.
+        You are operating in the PLANNING stage of this task. Each stage produces NEW work
+        in its OWN section — never echo a previous stage's content; build on it, do not
+        repeat it. Behave as a planner: elicit and capture CONCRETE, testable
+        requirements, make and record the key technical decisions, and surface any open
+        questions that block progress. Write what you settle into the task's
+        ## Requirements and ## Decisions sections. Do not jump ahead to implementation.
+
+        Gather requirements thoroughly in the chat — ask clarifying questions in full, as
+        many as needed; do not compress them. The chat reply IS the work here. Only once
+        planning is complete (all requirements/decisions settled, no blocking questions),
+        give a brief recap of what was settled before moving on.
 
         Completion criterion (demanding): planning is complete ONLY when the
         requirements are concrete and testable, the key decisions are made and
@@ -38,26 +44,48 @@ object StagePrompts {
     """.trimIndent()
 
     private val EXECUTION = """
-        You are operating in the EXECUTION stage of this task. Work through the
-        implementation/design in detail, building on the agreed requirements and
-        decisions. Record the concrete design — components, their responsibilities,
-        their interactions, and the key technical details — in the task's
-        ## Implementation section.
+        You are operating in the EXECUTION stage of this task. Each stage produces NEW
+        work in its OWN section — never echo a previous stage's content; build on it, do
+        not repeat it. Do NOT restate or summarize the requirements/decisions — they are
+        already captured in their sections. If your reply repeats the plan instead of
+        designing components, you are doing it wrong. Your output here MUST be new design
+        work written into ## Implementation: named components, their responsibilities,
+        their interfaces/APIs, their interactions, and key technical details.
 
-        Completion criterion (demanding): execution is complete ONLY when the design
-        is concrete and unambiguous — components, interactions, and key technical
-        details are specified, not hand-waved.
+        In your chat reply, give a SHORT summary (a few sentences) of what you designed
+        this stage — name the main components and the key design decisions — so the user
+        sees the progress. Put the full detailed design in ## Implementation; keep the
+        chat reply a concise recap that points to the task for full detail, NOT a copy of
+        the section and NOT a one-line "done".
+
+        Completion criterion (demanding): execution is complete ONLY when the design is
+        concrete and unambiguous — components, interactions, and key technical details
+        are specified, not hand-waved. Do NOT set the stage complete if ## Implementation
+        merely restates requirements or decisions; it is complete ONLY when
+        ## Implementation contains an actual concrete component design (named components,
+        interfaces, interactions, technical specifics) — not a summary of the plan.
     """.trimIndent()
 
     private val VALIDATION = """
-        You are operating in the VALIDATION stage of this task. Critically review the
-        result against the requirements: look for gaps, unmet requirements, problems,
-        and risks. Be skeptical; do not rubber-stamp. Record concrete findings in the
-        task's ## Validation section.
+        You are operating in the VALIDATION stage of this task. Each stage produces NEW
+        work in its OWN section — never echo a previous stage's content; build on it, do
+        not repeat it. Do NOT restate the plan or the design. Your only job is to
+        critically review the existing design against each requirement — record NEW
+        findings (gaps, unmet requirements, risks, or explicitly justified absence of
+        issues) in ## Validation, not a summary of prior stages. Be skeptical; do not
+        rubber-stamp.
 
-        Completion criterion (demanding): validation is complete ONLY when the
-        solution has been checked against each requirement and concrete issues are
-        identified — or their absence is explicitly justified.
+        In your chat reply, give a SHORT summary (a few sentences) of what you found this
+        stage — name the main findings and risks (or confirm none) — so the user sees the
+        progress. Put the full detailed review in ## Validation; keep the chat reply a
+        concise recap that points to the task for full detail, NOT a copy of the section
+        and NOT a one-line "done".
+
+        Completion criterion (demanding): validation is complete ONLY when the solution
+        has been checked against each requirement and concrete issues are identified — or
+        their absence is explicitly justified. Do NOT set the stage complete if
+        ## Validation merely restates the plan or design; it is complete ONLY when
+        ## Validation contains actual review findings checked against the requirements.
     """.trimIndent()
 
     private val DONE = """
