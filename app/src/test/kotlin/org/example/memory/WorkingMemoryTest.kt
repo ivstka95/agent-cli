@@ -32,11 +32,94 @@ class WorkingMemoryTest {
         val content = wm.activeTaskContent()!!
         assertTrue(content.startsWith("# Task: alpha"))
         assertTrue(content.contains("stage: planning"))
+        // Day 13 header fields
+        assertTrue(content.contains("stage_complete: false"))
+        assertTrue(content.contains("step:"))
+        assertTrue(content.contains("expected_action:"))
         assertTrue(content.contains("## Goal"))
         assertTrue(content.contains("## Requirements"))
         assertTrue(content.contains("## Decisions"))
+        // Day 13 artifact sections
+        assertTrue(content.contains("## Implementation"))
+        assertTrue(content.contains("## Validation"))
         assertTrue(content.contains("## Done"))
         assertTrue(content.contains("## TODO"))
+    }
+
+    @Test
+    fun `setActiveStage updates the stage line and persists across a restart`() {
+        // Given a fresh active task (stage planning)
+        WorkingMemory(workingDir).apply {
+            createTask("alpha")
+
+            // When the stage is set
+            assertTrue(setActiveStage("execution"))
+
+            // Then the stage line is updated (and only one stage line exists)
+            val content = activeTaskContent()!!
+            assertTrue(content.contains("stage: execution"))
+            assertFalse(content.contains("stage: planning"))
+        }
+
+        // And it survives a restart (fresh instance over the same dir)
+        val reopened = WorkingMemory(workingDir)
+        assertTrue(reopened.activeTaskContent()!!.contains("stage: execution"))
+    }
+
+    @Test
+    fun `setActiveStage returns false when there is no active task`() {
+        val wm = WorkingMemory(workingDir)
+        assertFalse(wm.setActiveStage("execution"))
+    }
+
+    @Test
+    fun `setActiveStage works on an old-format file missing the new fields`() {
+        // Given a hand-written old Day 11 task file (no step / expected_action / new sections)
+        val wm = WorkingMemory(workingDir)
+        wm.createTask("legacy")
+        wm.overwriteActive("# Task: legacy\nstage: planning\n\n## Goal\nold\n")
+
+        // When the stage is changed
+        assertTrue(wm.setActiveStage("validation"))
+
+        // Then the stage line is replaced in place
+        val content = wm.activeTaskContent()!!
+        assertTrue(content.contains("stage: validation"))
+        assertFalse(content.contains("stage: planning"))
+        assertTrue(content.contains("## Goal"))
+    }
+
+    @Test
+    fun `overwriteActivePreservingHeader keeps CODE-owned stage and stage_complete despite stale values`() {
+        // Given an active task that CODE has advanced to validation and marked complete
+        val wm = WorkingMemory(workingDir)
+        wm.createTask("demo")
+        wm.setActiveStage("validation")
+        wm.setStageComplete("true")
+
+        // When new content arrives carrying STALE header values (execution / false)
+        wm.overwriteActivePreservingHeader(
+            "# Task: demo\nstage: execution\nstage_complete: false\n\n## Validation\n- A finding\n",
+        )
+
+        // Then the persisted header stays CODE-owned (validation / true), but the body is applied
+        val content = wm.activeTaskContent()!!
+        assertTrue(content.contains("stage: validation"))
+        assertFalse(content.contains("stage: execution"))
+        assertTrue(content.contains("stage_complete: true"))
+        assertFalse(content.contains("stage_complete: false"))
+        assertTrue(content.contains("- A finding"))
+    }
+
+    @Test
+    fun `setStageComplete writes the header field and persists across a fresh instance`() {
+        WorkingMemory(workingDir).apply {
+            createTask("demo")
+            assertTrue(setStageComplete("true"))
+            assertTrue(activeTaskContent()!!.contains("stage_complete: true"))
+        }
+        // Survives a restart (fresh instance over the same dir)
+        assertTrue(WorkingMemory(workingDir).activeTaskContent()!!.contains("stage_complete: true"))
     }
 
     @Test

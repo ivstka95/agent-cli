@@ -83,7 +83,9 @@ class MemoryStoreCompositionTest {
         val memory = MemoryStore(root)
         memory.working.createTask("demo")
 
-        val updated = "# Task: demo\nstage: planning\n## Goal\nUPDATED_GOAL\n"
+        // Include the CODE-owned header fields so preserving them re-asserts the same values
+        // (byte-identical round-trip).
+        val updated = "# Task: demo\nstage: planning\nstage_complete: false\n## Goal\nUPDATED_GOAL\n"
         val fake = FakeResponseGenerator(GeneratedResponse("done", taskUpdate = updated, inputTokens = 4, outputTokens = 6))
         val agent = Agent(fake, memory)
 
@@ -142,6 +144,32 @@ class MemoryStoreCompositionTest {
         // Then the injected profile content changes accordingly
         assertTrue(fake.receivedSystemPrompt!!.contains("CONCISE_MARKER"))
         assertFalse(fake.receivedSystemPrompt!!.contains("DETAILED_MARKER"))
+    }
+
+    @Test
+    fun `the active task's stage selects the injected stage prompt and changing it changes the fragment`() = runBlocking {
+        // Given an active task (default stage: planning)
+        seedLongTerm()
+        val memory = MemoryStore(root)
+        memory.working.createTask("demo")
+
+        val fake = FakeResponseGenerator(GeneratedResponse("ok", taskUpdate = null, inputTokens = 1, outputTokens = 1))
+        val agent = Agent(fake, memory)
+
+        // When the agent runs at the planning stage
+        agent.run("hi", history = emptyList())
+        // Then the PLANNING fragment is injected (and not the EXECUTION one)
+        assertTrue(fake.receivedSystemPrompt!!.contains("# Current stage: planning"))
+        assertTrue(fake.receivedSystemPrompt!!.contains("PLANNING stage"))
+        assertFalse(fake.receivedSystemPrompt!!.contains("EXECUTION stage"))
+
+        // When the stage is switched to execution
+        memory.working.setActiveStage("execution")
+        agent.run("carry on", history = emptyList())
+        // Then the injected fragment changes accordingly
+        assertTrue(fake.receivedSystemPrompt!!.contains("# Current stage: execution"))
+        assertTrue(fake.receivedSystemPrompt!!.contains("EXECUTION stage"))
+        assertFalse(fake.receivedSystemPrompt!!.contains("PLANNING stage"))
     }
 
     @Test

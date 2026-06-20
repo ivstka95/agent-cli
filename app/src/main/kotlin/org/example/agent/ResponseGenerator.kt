@@ -4,12 +4,18 @@ package org.example.agent
  * What a generation produces: a natural reply, plus an optional updated task
  * markdown (auto-extraction into working memory). [taskUpdate] is null when
  * there is no active task, or when generation fell back to a plain reply.
+ *
+ * [stageComplete] (Day 13 / 3b) is the model's judgment of whether the CURRENT
+ * stage's completion criterion is met. It is only about the current stage — the
+ * model never proposes the next stage; CODE decides that. Defaults to false (no
+ * active task, or fallback).
  */
 data class GeneratedResponse(
     val reply: String,
     val taskUpdate: String?,
     val inputTokens: Int,
     val outputTokens: Int,
+    val stageComplete: Boolean = false,
 )
 
 /**

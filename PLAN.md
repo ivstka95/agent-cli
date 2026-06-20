@@ -42,7 +42,10 @@ memory/
 ### Strict task-file structure
 ```markdown
 # Task: <name>
-stage: planning            # Day 13/15: a VALID state from the enum
+stage: planning            # Day 13: a VALID state from the enum (CODE-owned)
+stage_complete: false      # Day 13/3c: CODE-owned, persisted (survives restart)
+step:                      # Day 13: current step within the stage
+expected_action:           # Day 13: what the system expects next
 
 ## Goal
 <one line>
@@ -51,6 +54,12 @@ stage: planning            # Day 13/15: a VALID state from the enum
 - ...
 
 ## Decisions
+- ...
+
+## Implementation
+- ...
+
+## Validation
 - ...
 
 ## Done
@@ -99,19 +108,21 @@ memory. This keeps dependencies one-directional (`agent → memory`, `agent → 
 - **State machine:** designed for a swarm (variant B), implemented as a single agent
   (variant A). `StageController` interface: `SingleAgentController` now,
   `MultiAgentController` later.
-- **Transitions:** flag `TransitionMode`, DEFAULT = AUTO with two-level validation
-  (see below). CONFIRM is an option.
+- **Transitions:** flag `TransitionMode`, DEFAULT = CONFIRM (3c) with two-level validation
+  (see below). AUTO (the autonomous chain) is opt-in.
 
 ---
 
-## Transitions (Days 13/15) — DEFAULT = AUTO, two-level validation
+## Transitions (Days 13/15) — DEFAULT = CONFIRM, two-level validation
 
 - **Level 1 (code, cheap, no tokens):** `canTransition(from, to)` against
   `allowedTransitions` (is the edge legal?) + artifact-readiness check (is there a plan /
   is the stack specified?).
 - **Level 2 (LLM, only if code passed):** "is the stage really complete and the artifact
   well-developed?" — catches "a plan exists but it's bad".
-- **CONFIRM (optional flag):** same as AUTO plus explicit user confirmation to transition.
+- **CONFIRM (default, 3c):** same validation as AUTO, but a ready transition is NOT
+  auto-performed — the agent pauses at the boundary and waits for the user's `:next`. AUTO is
+  the opt-in autonomous chain.
 
 Principle: code rejects clearly-invalid transitions for free; the LLM catches weak artifacts.
 
@@ -167,13 +178,108 @@ English" profile vs a "detailed, Russian" profile on the SAME task (secure-stora
 differ in style/format/language, showing the profile is applied automatically.
 
 ### Step 3 — Day 13: Task state machine  [HEAVIEST]
-- `TaskState` enum: PLANNING, EXECUTION, VALIDATION, DONE.
-- `StagePrompts`: a distinct system prompt per stage (agent behaves differently per stage).
-- `Orchestrator`: drives the task; the agent signals "stage complete" in the structured reply.
-- `StageController` interface (swarm hook) + `SingleAgentController` (variant A — one agent,
-  different prompts).
-- Auto-transitions: DEFAULT AUTO (two-level validation above), CONFIRM flag.
-- Stage stored in the task file (`stage`), survives restart (pause/resume).
+**Task state (fields in the task file):**
+- `stage` — PLANNING / EXECUTION / VALIDATION / DONE.
+- `stage_complete` — `true|false` (3c). CODE-owned and PERSISTED in the header so completion
+  survives a restart (CONFIRM pause/resume). The model never sets it via `task_update` — it is
+  re-asserted after every overwrite, exactly like `stage`; missing in old files → `false`.
+- `step` — the current step within the stage.
+- `expected_action` — what the system expects next.
+
+**Task structure (sections):** `## Goal` / `## Requirements` / `## Decisions` /
+`## Implementation` / `## Validation` / `## Done` / `## TODO`. Each stage produces its
+artifact section: planning → Requirements + Decisions, execution → Implementation,
+validation → Validation.
+
+**`StagePrompts`:** a distinct system prompt per stage, each containing (1) the stage
+behavior and (2) a demanding, checkable completion criterion the model uses to judge
+`stage_complete`. Criteria are content-specific and strict (don't accept hand-waving —
+e.g. planning is complete only when requirements are concrete, key decisions are made,
+and no blocking open questions remain).
+
+**Auto-transition mechanics:**
+- The combined structured call returns `stage_complete: boolean` (only whether the
+  CURRENT stage is complete — it does NOT propose the next stage).
+- The NEXT stage is determined by CODE from the transition table
+  (planning→execution→validation→done). The model never chooses the next stage — this
+  prevents skipping and invalid stages.
+- Two-level validation: **Level 1 (code, cheap, no tokens)** — is the edge legal
+  (`allowedTransitions`) AND is the current stage's artifact section non-empty?
+  **Level 2 (model)** — `stage_complete` judged against the stage criterion. A
+  transition happens only if the model says complete AND code confirms (legal +
+  artifact present).
+
+**Autonomous stage chain — AUTO mode (3b):** In AUTO mode (opt-in via `:mode auto`), after a
+user turn the agent advances through stages AUTONOMOUSLY within that single turn — like a real
+agent (e.g. Claude Code) that doesn't stop to ask "should I continue?" between steps. (Under the
+default CONFIRM mode the same per-stage work runs but a ready transition is deferred to `:next`
+— see Transition modes below.) The loop per user turn:
+- Call the agent on the current stage; apply its `task_update`.
+- If `stage_complete == true`:
+  - **Artifact ready** (Level 1: required sections non-empty) AND edge legal → transition
+    (CODE picks the next stage from the table; the model never picks it). Print
+    `>>> Stage transition: <from> → <to>`. If the new stage is DONE → **STOP** (task finished).
+    Otherwise **CONTINUE** the loop on the new stage (the agent immediately starts working the
+    next stage — no "shall we proceed?" turn).
+  - **Artifact NOT ready** → exactly ONE self-correction follow-up (print
+    `>>> Refining <stage> artifact before advancing...`, feed the model the empty-section
+    feedback — "You marked the stage complete, but the <section> section is empty. Fill it with
+    concrete content before the stage can advance." — apply its `task_update`, re-evaluate once).
+    If it becomes ready → transition and continue; if still not ready → **STOP** and return to
+    the user (stalled — needs input).
+- If `stage_complete == false` → the agent isn't done with this stage (e.g. it asked the user a
+  question / needs input) → **STOP** and return to the user.
+
+**Stop conditions** (where the autonomous chain ends and control returns to the user):
+- **DONE reached** — the task is complete.
+- **User input needed** — the model did not mark the stage complete (it's asking a question or
+  needs more from the user).
+- **Stalled** — the model marked the stage complete but the artifact isn't ready even after the
+  one self-correction (no progress → stop rather than loop).
+
+Between these stop conditions the agent proceeds through stages on its own. There is **no fixed
+per-turn transition cap** — the chain runs as far as genuine progress allows (each transition
+requires a real, code-verified artifact, so it cannot advance on empty stages). The chain cannot
+spin without progress: every loop iteration either advances on a ready artifact, stops for user
+input, stops at DONE, or stops stalled. (Optional manual interruption / convenience limits are
+NOT part of this; they can be added later if needed.)
+
+**Step-by-step display (pre-decided):** print as the chain runs — each stage's agent reply is
+printed, with `>>> Stage transition: <from> → <to>` between stages and `>>> Refining ...` before
+any self-correction reply, so the user sees progress in real time (not buffered to the end).
+
+**Transition modes (3c):**
+- `TransitionMode`: **CONFIRM (default)** / AUTO, toggled by `:mode confirm` / `:mode auto`.
+  Session state, NOT persisted (each start defaults to CONFIRM); the stage itself still persists.
+- CONFIRM (default): process exactly ONE stage per user turn. When the stage is complete and the
+  artifact is ready, DO NOT advance — print `>>> Stage '<from>' complete and ready to advance to
+  '<to>'. Type :next to continue.` and wait. The agent pauses at EVERY boundary
+  (planning→execution→validation→done) — this is what satisfies the Day 13 pause/resume
+  requirement. Readiness is read from the PERSISTED header (`stage_complete` + artifact), so a
+  stage completed last session is advanceable after a quit+restart.
+- AUTO: the autonomous chain above — a ready transition is performed automatically and the agent
+  continues to the next stage. Same validation as CONFIRM; only deferral differs.
+- **`:next [instruction]`** — advance ONE stage AND immediately run the new stage. Readiness reuses
+  the SAME `nextStage` + `canTransition` + `isArtifactReady` checks (from the persisted header).
+  On success it transitions then runs the new stage through the normal agent path with `instruction`
+  as input (or a neutral default when omitted) — EXCEPT advancing into DONE, which is terminal and
+  runs no turn. Refuses (and runs nothing) if not ready (artifact incomplete / not marked complete)
+  or already at DONE. `:mode` with no arg shows the current mode.
+
+**Display (all from CODE, reliable — not from the model):**
+- REPL prints a `[stage: <stage> · step: <step>]` label with the agent's reply.
+- On a transition, REPL prints an explicit notice: `>>> Stage transition: <from> → <to>`.
+  (This same notice mechanism will show BLOCKED transitions in Day 15.)
+
+**Architecture:** `TaskState` enum; `StagePrompts`; `TaskStateMachine` (transition table +
+validation); `Orchestrator` (drives the task); `StageController` interface (swarm hook) +
+`SingleAgentController` (variant A — one agent, different prompts). Stage persists in the
+task file, surviving restart (pause/resume — reuses Day 11 persistence). The swarm
+(`MultiAgentController`) remains designed-for, NOT implemented.
+
+**Verify** (Day 13 requirements): stage drives behavior (different `StagePrompt` per
+stage); auto-transitions occur with validation; pause at any stage and resume without
+re-explaining (restart → stage persisted → continue). Demo on the secure-storage task.
 
 ### Step 4 — Day 14: Invariants
 - `invariants.md` — hard rules, separate from the dialog.
