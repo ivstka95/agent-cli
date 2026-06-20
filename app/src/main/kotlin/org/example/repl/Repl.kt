@@ -7,6 +7,8 @@ import org.example.agent.Role
 import org.example.memory.MemoryStore
 import org.example.task.TaskHeader
 import org.example.task.TaskState
+import org.example.task.TaskStateMachine
+import org.example.task.TransitionMode
 
 /**
  * Interactive read-eval-print loop.
@@ -14,14 +16,21 @@ import org.example.task.TaskState
  * Owns no history itself — short-term memory lives in [MemoryStore.shortTerm],
  * which accumulates the session dialog and is passed to the Agent each turn.
  * Also handles the memory commands (working-memory tasks + long-term :remember).
+ *
+ * [out] is the output sink (defaults to stdout); tests inject a capture. The
+ * transition [mode] and the pending-confirmation are session state — not persisted.
  */
 class Repl(
     private val agent: Agent,
     private val memory: MemoryStore,
+    private val out: (String) -> Unit = ::println,
 ) {
 
+    /** Day 13 / 3c: session transition mode (default CONFIRM); not persisted. */
+    private var mode: TransitionMode = TransitionMode.DEFAULT
+
     suspend fun start() {
-        println("CLI Agent. Type a message, :help for commands, or :quit to exit.")
+        out("CLI Agent. Type a message, :help for commands, or :quit to exit.")
         while (true) {
             // "You: " is the prompt label; the terminal echoes the typed text onto
             // the same line, so the turn reads "You: <message>". We never re-print
@@ -31,22 +40,24 @@ class Repl(
 
             // EOF (Ctrl-D / piped input ends): break the prompt line, then exit.
             if (input == null) {
-                println()
+                out("")
                 break
             }
             if (input.isEmpty()) continue
-            if (input.startsWith(":")) {
-                if (handleCommand(input)) break // command signalled exit
-                continue
-            }
-
-            chat(input)
+            if (submit(input)) break // line signalled exit
         }
-        println("Bye.")
+        out("Bye.")
+    }
+
+    /** Process one input line (command or chat). Returns true if the REPL should exit. */
+    internal suspend fun submit(input: String): Boolean {
+        if (input.startsWith(":")) return handleCommand(input)
+        chat(input)
+        return false
     }
 
     /** Handle a `:`-prefixed command. Returns true if the REPL should exit. */
-    private fun handleCommand(input: String): Boolean {
+    private suspend fun handleCommand(input: String): Boolean {
         val parts = input.split(" ", limit = 2)
         val command = parts[0]
         val arg = parts.getOrNull(1)?.trim().orEmpty()
@@ -56,19 +67,19 @@ class Repl(
             ":help" -> printHelp()
             ":task-new" -> {
                 if (arg.isEmpty()) {
-                    println("Usage: :task-new <name>")
+                    out("Usage: :task-new <name>")
                 } else {
                     memory.working.createTask(arg)
-                    println("Created and switched to task '$arg'.")
+                    out("Created and switched to task '$arg'.")
                 }
             }
             ":task-switch" -> {
                 if (arg.isEmpty()) {
-                    println("Usage: :task-switch <name>")
+                    out("Usage: :task-switch <name>")
                 } else if (memory.working.switchActive(arg)) {
-                    println("Active task is now '$arg'.")
+                    out("Active task is now '$arg'.")
                 } else {
-                    println("No such task: '$arg'. Use :task-list to see tasks.")
+                    out("No such task: '$arg'. Use :task-list to see tasks.")
                 }
             }
             ":task-list" -> printList(
@@ -79,62 +90,78 @@ class Repl(
             ":task-show" -> {
                 val content = memory.working.activeTaskContent()
                 if (content == null) {
-                    println("No active task. Create one with :task-new <name>.")
+                    out("No active task. Create one with :task-new <name>.")
                 } else {
-                    println(content)
+                    out(content)
                 }
             }
             ":stage" -> {
-                // Manually set the active task's stage so behavior across stages can
-                // be tested before auto-transitions exist (3b). Validation lives here
-                // (against the stage enum) so WorkingMemory stays string-typed.
+                // Manually set the active task's stage. Validation lives here (against the
+                // stage enum) so WorkingMemory stays string-typed.
                 val target = TaskState.parse(arg)
                 when {
                     arg.isEmpty() ->
-                        println("Usage: :stage <planning|execution|validation|done>")
+                        out("Usage: :stage <planning|execution|validation|done>")
                     target == null ->
-                        println("Invalid stage: '$arg'. Valid: planning, execution, validation, done.")
-                    memory.working.setActiveStage(target.stageValue) ->
-                        println("Stage set to ${target.stageValue}.")
+                        out("Invalid stage: '$arg'. Valid: planning, execution, validation, done.")
+                    memory.working.setActiveStage(target.stageValue) -> {
+                        // setActiveStage also resets stage_complete (manual stage → not complete yet).
+                        out("Stage set to ${target.stageValue}.")
+                    }
                     else ->
-                        println("No active task. Create one with :task-new <name>.")
+                        out("No active task. Create one with :task-new <name>.")
                 }
             }
+            ":mode" -> {
+                // [3c] Session transition mode. No arg → show it; otherwise set auto/confirm.
+                if (arg.isEmpty()) {
+                    out("Transition mode: ${mode.name.lowercase()} (default: confirm).")
+                } else {
+                    val target = TransitionMode.parse(arg)
+                    if (target == null) {
+                        out("Invalid mode: '$arg'. Valid: auto, confirm.")
+                    } else {
+                        mode = target
+                        out("Transition mode: ${mode.name.lowercase()}.")
+                    }
+                }
+            }
+            ":next" -> advanceAndRun(arg)
             ":remember" -> {
                 if (arg.isEmpty()) {
-                    println("Usage: :remember <text>")
+                    out("Usage: :remember <text>")
                 } else {
                     memory.longTerm.appendKnowledge(arg)
-                    println("Remembered.")
+                    out("Remembered.")
                 }
             }
             ":profile-new" -> {
                 if (arg.isEmpty()) {
-                    println("Usage: :profile-new <name>")
+                    out("Usage: :profile-new <name>")
                 } else {
                     memory.longTerm.createProfile(arg)
-                    println("Created and switched to profile '$arg'.")
+                    out("Created and switched to profile '$arg'.")
                 }
             }
             ":profile-switch" -> {
                 if (arg.isEmpty()) {
-                    println("Usage: :profile-switch <name>")
+                    out("Usage: :profile-switch <name>")
                 } else if (memory.longTerm.switchActiveProfile(arg)) {
-                    println("Active profile is now '$arg'.")
+                    out("Active profile is now '$arg'.")
                 } else {
-                    println("No such profile: '$arg'. Use :profile-list to see profiles.")
+                    out("No such profile: '$arg'. Use :profile-list to see profiles.")
                 }
             }
-            ":profile-show" -> println(memory.longTerm.profile())
+            ":profile-show" -> out(memory.longTerm.profile())
             ":profile-set" -> {
                 val fieldParts = arg.split(" ", limit = 2)
                 val field = fieldParts[0]
                 val value = fieldParts.getOrNull(1)?.trim().orEmpty()
                 if (field.isEmpty() || value.isEmpty()) {
-                    println("Usage: :profile-set <field> <value>")
+                    out("Usage: :profile-set <field> <value>")
                 } else {
                     memory.longTerm.setProfileField(field, value)
-                    println("Set $field.")
+                    out("Set $field.")
                 }
             }
             ":profile-list" -> printList(
@@ -142,16 +169,52 @@ class Repl(
                 memory.longTerm.activeProfileName(),
                 "No profiles yet. Create one with :profile-new <name>.",
             )
-            else -> println("Unknown command: $command. Type :help for the list.")
+            else -> out("Unknown command: $command. Type :help for the list.")
         }
         return false
     }
 
+    /**
+     * [3c] `:next [instruction]` — advance to the next stage AND immediately run it. Readiness
+     * is read from the PERSISTED header (so a stage completed in a previous session is advanceable
+     * after a restart), reusing the SAME TaskStateMachine checks the chain uses: a legal next edge,
+     * the artifact ready, and the CODE-owned `stage_complete` flag set. On refusal nothing advances
+     * or runs (and [instruction] is ignored). After a successful transition the new stage is run
+     * through the normal [chat] path with [instruction] as input (or a neutral default) — EXCEPT
+     * advancing INTO DONE, which is terminal and runs no agent turn.
+     */
+    private suspend fun advanceAndRun(instruction: String) {
+        val content = memory.working.activeTaskContent()
+        if (content == null) {
+            out("No active task. Create one with :task-new <name>.")
+            return
+        }
+        val header = TaskHeader.parse(content)
+        val current = header.stage
+        val next = TaskStateMachine.nextStage(current)
+        when {
+            next == null ->
+                out("Task is already complete (stage '${current.stageValue}'); nothing to advance.")
+            !TaskStateMachine.isArtifactReady(current, content) ->
+                out("Current stage '${current.stageValue}' is not ready to advance: artifact incomplete.")
+            !header.stageComplete ->
+                out("Current stage '${current.stageValue}' is not ready to advance: stage not marked complete.")
+            TaskStateMachine.canTransition(current, next) -> {
+                memory.working.setActiveStage(next.stageValue) // also resets stage_complete for the new stage
+                out(">>> Stage transition: ${current.stageValue} → ${next.stageValue}")
+                // DONE is terminal — no agent turn. Otherwise run the new stage now.
+                if (next != TaskState.DONE) {
+                    chat(instruction.ifBlank { ADVANCE_INPUT })
+                }
+            }
+        }
+    }
+
     private suspend fun chat(input: String) {
         try {
-            // [Day 13 / 3b] The agent runs an autonomous stage chain; print each step as
-            // it happens (real time, not buffered) via the callback.
-            val response = agent.run(input, memory.shortTerm.history()) { step -> printStep(step) }
+            // [Day 13] The agent runs the stage chain under the current mode; print each
+            // step as it happens (real time, not buffered) via the callback.
+            val response = agent.run(input, memory.shortTerm.history(), mode) { step -> printStep(step) }
             // Only record the turn once it succeeds, so failed turns don't pollute the
             // session history. The chain's replies collapse into one assistant turn.
             memory.shortTerm.add(Message(Role.USER, input))
@@ -159,26 +222,29 @@ class Repl(
 
             // Stage label (from CODE) + token totals at the END — the label reflects the
             // FINAL stage the chain stopped on.
-            stageLabel()?.let { println(it) }
+            stageLabel()?.let { out(it) }
             if (response.taskUpdated) {
-                println("  [working memory updated: ${memory.working.activeTaskName()}]")
+                out("  [working memory updated: ${memory.working.activeTaskName()}]")
             }
-            println("  [tokens: in=${response.inputTokens}, out=${response.outputTokens}]")
+            out("  [tokens: in=${response.inputTokens}, out=${response.outputTokens}]")
         } catch (e: Exception) {
             // One bad call must not kill the REPL.
-            println("Error: ${e.message}")
+            out("Error: ${e.message}")
         }
     }
 
-    /** Print one chain step (from CODE): reply, then any refinement notice/reply, then any transition. */
+    /** Print one chain step (from CODE): reply, refinement, then a performed OR pending transition. */
     private fun printStep(step: ChainStep) {
-        println("Agent: ${step.reply}")
+        out("Agent: ${step.reply}")
         step.refinement?.let { r ->
-            println(">>> Refining ${r.stage.stageValue} artifact before advancing...")
-            println("Agent: ${r.replyText}")
+            out(">>> Refining ${r.stage.stageValue} artifact before advancing...")
+            out("Agent: ${r.replyText}")
         }
         step.transition?.let { t ->
-            println(">>> Stage transition: ${t.from.stageValue} → ${t.to.stageValue}")
+            out(">>> Stage transition: ${t.from.stageValue} → ${t.to.stageValue}")
+        }
+        step.pendingTransition?.let { t ->
+            out(">>> Stage '${t.from.stageValue}' complete and ready to advance to '${t.to.stageValue}'. Type :next to continue.")
         }
     }
 
@@ -197,17 +263,17 @@ class Repl(
     /** Print a list of names with a `* ` marker on the active one (or an empty message). */
     private fun printList(items: List<String>, active: String?, emptyMessage: String) {
         if (items.isEmpty()) {
-            println(emptyMessage)
+            out(emptyMessage)
         } else {
             items.forEach { name ->
                 val marker = if (name == active) "* " else "  "
-                println("$marker$name")
+                out("$marker$name")
             }
         }
     }
 
     private fun printHelp() {
-        println(
+        out(
             """
             |Commands:
             |  :task-new <name>     create a task and make it active
@@ -215,6 +281,8 @@ class Repl(
             |  :task-list           list tasks (* = active)
             |  :task-show           print the active task file
             |  :stage <name>        set the active task's stage (planning/execution/validation/done)
+            |  :mode [auto|confirm] show or set the transition mode (default: confirm)
+            |  :next [instruction]  advance to the next stage and run it (optional instruction)
             |  :remember <text>     append a line to long-term knowledge
             |  :profile-new <name>     create an empty profile and make it active
             |  :profile-switch <name>  switch the active profile
@@ -226,5 +294,10 @@ class Repl(
             |Anything else is sent to the agent as a chat message.
             """.trimMargin(),
         )
+    }
+
+    private companion object {
+        /** Neutral service input fed to the new stage when `:next` is given no instruction. */
+        const val ADVANCE_INPUT = "Proceed with the current stage."
     }
 }

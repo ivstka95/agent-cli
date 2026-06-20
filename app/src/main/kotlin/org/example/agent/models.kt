@@ -21,16 +21,19 @@ data class StructuredResult(
 )
 
 /**
- * One step of the autonomous stage chain (Day 13 / 3b): the agent's work on a
- * single stage within a user turn. [stage] is null only for the no-active-task
- * plain reply. [refinement] is set if a one-shot self-correction ran during this
- * step; [transition] is set if the stage advanced after this step.
+ * One step of the stage chain (Day 13): the agent's work on a single stage within
+ * a user turn. [stage] is null only for the no-active-task plain reply.
+ * [refinement] is set if a one-shot self-correction ran during this step.
+ * [transition] is set if the stage actually advanced (AUTO mode); [pendingTransition]
+ * is set instead when the stage is complete + ready but the advance is DEFERRED for
+ * the user's `:next` (CONFIRM mode, 3c). At most one of the two is non-null.
  */
 data class ChainStep(
     val stage: TaskState?,
     val reply: String,
     val refinement: Refinement? = null,
     val transition: StageTransition? = null,
+    val pendingTransition: StageTransition? = null,
 )
 
 /**

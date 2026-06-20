@@ -2,8 +2,20 @@ package org.example.task
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class TaskHeaderTest {
+
+    @Test
+    fun `parses stage_complete true or false, and defaults to false when missing`() {
+        assertTrue(TaskHeader.parse("# Task: x\nstage: planning\nstage_complete: true\n").stageComplete)
+        assertFalse(TaskHeader.parse("# Task: x\nstage: planning\nstage_complete: false\n").stageComplete)
+        // Missing field (old file) → false.
+        assertFalse(TaskHeader.parse("# Task: x\nstage: planning\n").stageComplete)
+        // Case-insensitive.
+        assertTrue(TaskHeader.parse("# Task: x\nstage_complete: TRUE\n").stageComplete)
+    }
 
     @Test
     fun `parses stage step and expected_action from a full new-format file`() {

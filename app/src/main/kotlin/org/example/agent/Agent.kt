@@ -5,6 +5,7 @@ import org.example.task.StagePrompts
 import org.example.task.TaskHeader
 import org.example.task.TaskState
 import org.example.task.TaskStateMachine
+import org.example.task.TransitionMode
 
 /**
  * Core agent: encapsulates the request -> response cycle.
@@ -20,16 +21,24 @@ class Agent(
 ) {
 
     /**
-     * Run one user turn. With an active task this is an AUTONOMOUS chain (Day 13 / 3b):
-     * the agent works the current stage, and when a stage genuinely completes (CODE
-     * verifies a non-empty artifact) it advances and immediately works the next stage —
-     * no "shall we continue?" turn — until a stop condition (DONE reached, the model
-     * needs user input, or a stage stalls). [onStep] is invoked as each step finishes so
-     * the REPL can print progress in real time (not buffered to the end).
+     * Run one user turn over the active task (Day 13).
+     *
+     * In [TransitionMode.AUTO] this is an autonomous chain: when a stage genuinely completes
+     * (CODE verifies a non-empty artifact) it advances and immediately works the next stage,
+     * until a stop condition (DONE reached, the model needs input, or a stage stalls).
+     *
+     * In [TransitionMode.CONFIRM] (the default) it processes exactly ONE stage: when that stage
+     * is complete and ready it does NOT advance — it reports a [ChainStep.pendingTransition] and
+     * stops, so the REPL can wait for the user's `:next`. All validation (artifact readiness,
+     * self-correction, retry-robustness) is identical in both modes; only whether a ready
+     * transition is auto-performed differs.
+     *
+     * [onStep] is invoked as each step finishes so the REPL can print progress in real time.
      */
     suspend fun run(
         userInput: String,
         history: List<Message>,
+        mode: TransitionMode = TransitionMode.DEFAULT,
         onStep: (ChainStep) -> Unit = {},
     ): AgentResponse {
         val fullMessages = history + Message(Role.USER, userInput)
@@ -69,16 +78,10 @@ class Agent(
             var stageComplete = gen.stageComplete
             var refinement: Refinement? = null
 
-            // STOP: the model isn't done with this stage (it's asking / needs input).
-            if (!stageComplete) {
-                emit(ChainStep(stage, gen.reply))
-                break
-            }
-
-            // [Day 13 / 3b] One-shot self-correction: complete but Level 1 fails (the
-            // stage's artifact section is empty) and a next stage exists. EXACTLY ONE
-            // follow-up for THIS stage — no nested loop. Each new stage gets a fresh budget.
-            if (next != null && !TaskStateMachine.isArtifactReady(stage, content)) {
+            // [Day 13 / 3b] One-shot self-correction: the model marked the stage complete but
+            // Level 1 fails (the stage's artifact section is empty) and a next stage exists.
+            // EXACTLY ONE follow-up for THIS stage — no nested loop. Each stage gets a fresh budget.
+            if (stageComplete && next != null && !TaskStateMachine.isArtifactReady(stage, content)) {
                 val section = TaskStateMachine.firstEmptyArtifactSection(stage, content)!!
                 val followup = responseGenerator.generate(
                     buildSystemPrompt(content) + selfCorrectionNote(section),
@@ -103,13 +106,22 @@ class Agent(
                 // Defensive: every advance must move strictly forward, so the loop
                 // can never spin on the same stage.
                 check(next!!.ordinal > stage.ordinal) { "non-forward transition $stage → $next" }
+                if (mode == TransitionMode.CONFIRM) {
+                    // [3c] Complete + ready, but DEFER the transition: persist completion in the
+                    // header (so it survives a restart) and stop — the user advances with `:next`.
+                    memory.working.setStageComplete("true")
+                    emit(ChainStep(stage, gen.reply, refinement, pendingTransition = StageTransition(stage, next)))
+                    break
+                }
+                // [AUTO] Advance now (setActiveStage also resets stage_complete for the new stage).
                 memory.working.setActiveStage(next.stageValue)
                 emit(ChainStep(stage, gen.reply, refinement, StageTransition(stage, next)))
                 if (next == TaskState.DONE) break // reached DONE → task finished
                 // else CONTINUE: immediately work the new stage.
             } else {
-                // STOP: terminal DONE, or stalled (complete but artifact still not ready
-                // after the one self-correction) — return to the user rather than loop.
+                // STOP: the model needs input (not complete), or the stage stalled (complete but
+                // artifact still not ready). Persist the model's completion judgment for this stage.
+                memory.working.setStageComplete(stageComplete.toString())
                 emit(ChainStep(stage, gen.reply, refinement))
                 break
             }
@@ -119,12 +131,13 @@ class Agent(
     }
 
     /**
-     * Apply the model's task update, PRESERVING the CODE-owned `stage:` line so the
-     * model's markdown can never regress the stage. Returns whether it applied.
+     * Apply the model's task update, PRESERVING the CODE-owned header fields (`stage`,
+     * `stage_complete`) so the model's markdown can never set or regress them. Returns
+     * whether it applied.
      */
     private fun applyTaskUpdate(update: String?, activeTask: String?): Boolean {
         if (update != null && activeTask != null) {
-            memory.working.overwriteActivePreservingStage(update)
+            memory.working.overwriteActivePreservingHeader(update)
             return true
         }
         return false

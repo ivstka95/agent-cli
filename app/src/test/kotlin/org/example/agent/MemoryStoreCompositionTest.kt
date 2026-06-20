@@ -83,7 +83,9 @@ class MemoryStoreCompositionTest {
         val memory = MemoryStore(root)
         memory.working.createTask("demo")
 
-        val updated = "# Task: demo\nstage: planning\n## Goal\nUPDATED_GOAL\n"
+        // Include the CODE-owned header fields so preserving them re-asserts the same values
+        // (byte-identical round-trip).
+        val updated = "# Task: demo\nstage: planning\nstage_complete: false\n## Goal\nUPDATED_GOAL\n"
         val fake = FakeResponseGenerator(GeneratedResponse("done", taskUpdate = updated, inputTokens = 4, outputTokens = 6))
         val agent = Agent(fake, memory)
 

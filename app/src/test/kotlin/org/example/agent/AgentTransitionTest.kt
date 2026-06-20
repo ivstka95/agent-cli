@@ -4,11 +4,13 @@ import kotlinx.coroutines.runBlocking
 import org.example.memory.MemoryStore
 import org.example.task.TaskHeader
 import org.example.task.TaskState
+import org.example.task.TransitionMode
 import java.io.File
 import kotlin.io.path.createTempDirectory
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -49,6 +51,7 @@ class AgentTransitionTest {
     /** A full task document with the given stage and section bodies (default = empty placeholder). */
     private fun task(
         stage: String,
+        complete: String = "false",
         req: String = "-",
         dec: String = "-",
         impl: String = "-",
@@ -56,6 +59,7 @@ class AgentTransitionTest {
     ) = """
         # Task: demo
         stage: $stage
+        stage_complete: $complete
         step:
         expected_action:
 
@@ -87,6 +91,9 @@ class AgentTransitionTest {
     private fun activeStage(memory: MemoryStore): TaskState =
         TaskHeader.parse(memory.working.activeTaskContent()!!).stage
 
+    private fun activeStageComplete(memory: MemoryStore): Boolean =
+        TaskHeader.parse(memory.working.activeTaskContent()!!).stageComplete
+
     @Test
     fun `chain advances through every stage to DONE in a single turn`() = runBlocking {
         val memory = MemoryStore(root)
@@ -100,7 +107,7 @@ class AgentTransitionTest {
         )
         val agent = Agent(gen, memory)
 
-        val response = agent.run("drive it", history = emptyList())
+        val response = agent.run("drive it", history = emptyList(), mode = TransitionMode.AUTO)
 
         // One call per stage, no extra calls (each artifact was ready → no self-correction).
         assertEquals(3, gen.calls)
@@ -121,7 +128,7 @@ class AgentTransitionTest {
         )
         val agent = Agent(gen, memory)
 
-        val response = agent.run("hi", history = emptyList())
+        val response = agent.run("hi", history = emptyList(), mode = TransitionMode.AUTO)
 
         assertEquals(1, gen.calls)
         assertEquals(1, response.steps.size)
@@ -141,7 +148,7 @@ class AgentTransitionTest {
         )
         val agent = Agent(gen, memory)
 
-        val response = agent.run("finish planning", history = emptyList())
+        val response = agent.run("finish planning", history = emptyList(), mode = TransitionMode.AUTO)
 
         assertEquals(2, gen.calls, "exactly one follow-up — no loop, no extra stages")
         assertEquals(1, response.steps.size)
@@ -163,7 +170,7 @@ class AgentTransitionTest {
         )
         val agent = Agent(gen, memory)
 
-        val response = agent.run("go", history = emptyList())
+        val response = agent.run("go", history = emptyList(), mode = TransitionMode.AUTO)
 
         assertEquals(3, gen.calls) // planning + its follow-up + execution
         assertEquals(2, response.steps.size)
@@ -187,7 +194,7 @@ class AgentTransitionTest {
         )
         val agent = Agent(gen, memory)
 
-        val response = agent.run("drive it", history = emptyList())
+        val response = agent.run("drive it", history = emptyList(), mode = TransitionMode.AUTO)
 
         // Bounded by genuine progress: PLANNING → EXECUTION → VALIDATION → DONE, then stop.
         assertEquals(3, gen.calls)
@@ -208,7 +215,7 @@ class AgentTransitionTest {
         )
         val agent = Agent(gen, memory)
 
-        agent.run("look at it", history = emptyList())
+        agent.run("look at it", history = emptyList(), mode = TransitionMode.AUTO)
 
         assertEquals(1, gen.calls)
         // CODE owns the stage: the model's stale `stage: execution` must not be persisted.
@@ -227,10 +234,71 @@ class AgentTransitionTest {
         )
         val agent = Agent(gen, memory)
 
-        val response = agent.run("go", history = emptyList())
+        val response = agent.run("go", history = emptyList(), mode = TransitionMode.AUTO)
 
         assertEquals(2, gen.calls)
         assertEquals(8, response.inputTokens)
         assertEquals(10, response.outputTokens)
+    }
+
+    @Test
+    fun `CONFIRM mode does not auto-advance a ready stage, it defers to next`() = runBlocking {
+        val memory = MemoryStore(root)
+        memory.working.createTask("demo")
+        val gen = ScriptedResponseGenerator(
+            listOf(complete("planned", task("planning", req = "- R", dec = "- D"))),
+        )
+        val agent = Agent(gen, memory)
+
+        val response = agent.run("plan it", history = emptyList(), mode = TransitionMode.CONFIRM)
+
+        // Exactly one stage processed; the transition is DEFERRED, not performed.
+        assertEquals(1, gen.calls)
+        assertEquals(1, response.steps.size)
+        assertNull(response.steps[0].transition)
+        assertEquals(TaskState.PLANNING, response.steps[0].pendingTransition?.from)
+        assertEquals(TaskState.EXECUTION, response.steps[0].pendingTransition?.to)
+        // The stage did NOT advance — it waits for `:next`.
+        assertEquals(TaskState.PLANNING, activeStage(memory))
+        // [3c] Completion is PERSISTED in the header so `:next` works after a restart.
+        assertTrue(activeStageComplete(memory))
+    }
+
+    @Test
+    fun `AUTO advancing resets stage_complete to false on the new stage`() = runBlocking {
+        val memory = MemoryStore(root)
+        memory.working.createTask("demo")
+        val gen = ScriptedResponseGenerator(
+            listOf(
+                complete("planned", task("planning", req = "- R", dec = "- D")),
+                // execution needs input → chain stops at execution, not complete
+                GeneratedResponse("need input", taskUpdate = task("execution", req = "- R", dec = "- D"), inputTokens = 1, outputTokens = 1, stageComplete = false),
+            ),
+        )
+        val agent = Agent(gen, memory)
+
+        agent.run("go", history = emptyList(), mode = TransitionMode.AUTO)
+
+        // Advanced to execution, and the new stage is not marked complete.
+        assertEquals(TaskState.EXECUTION, activeStage(memory))
+        assertFalse(activeStageComplete(memory))
+    }
+
+    @Test
+    fun `the model cannot set stage_complete via its task_update — CODE owns it`() = runBlocking {
+        val memory = MemoryStore(root)
+        memory.working.createTask("demo")
+        // The model embeds stage_complete: true in its markdown, but its SIGNAL is false
+        // (needs input). CODE must keep the header false.
+        val sneaky = task("planning", complete = "true", req = "- R", dec = "- D")
+        val gen = ScriptedResponseGenerator(
+            listOf(GeneratedResponse("hmm", taskUpdate = sneaky, inputTokens = 1, outputTokens = 1, stageComplete = false)),
+        )
+        val agent = Agent(gen, memory)
+
+        agent.run("work", history = emptyList(), mode = TransitionMode.CONFIRM)
+
+        assertFalse(activeStageComplete(memory), "model's embedded stage_complete must be ignored")
+        assertEquals(TaskState.PLANNING, activeStage(memory))
     }
 }

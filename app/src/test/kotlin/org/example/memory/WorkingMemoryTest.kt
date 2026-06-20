@@ -33,6 +33,7 @@ class WorkingMemoryTest {
         assertTrue(content.startsWith("# Task: alpha"))
         assertTrue(content.contains("stage: planning"))
         // Day 13 header fields
+        assertTrue(content.contains("stage_complete: false"))
         assertTrue(content.contains("step:"))
         assertTrue(content.contains("expected_action:"))
         assertTrue(content.contains("## Goal"))
@@ -89,20 +90,36 @@ class WorkingMemoryTest {
     }
 
     @Test
-    fun `overwriteActivePreservingStage keeps the persisted stage despite a stale one in the new content`() {
-        // Given an active task that CODE has advanced to validation
+    fun `overwriteActivePreservingHeader keeps CODE-owned stage and stage_complete despite stale values`() {
+        // Given an active task that CODE has advanced to validation and marked complete
         val wm = WorkingMemory(workingDir)
         wm.createTask("demo")
         wm.setActiveStage("validation")
+        wm.setStageComplete("true")
 
-        // When new content arrives carrying a STALE stage line (execution)
-        wm.overwriteActivePreservingStage("# Task: demo\nstage: execution\n\n## Validation\n- A finding\n")
+        // When new content arrives carrying STALE header values (execution / false)
+        wm.overwriteActivePreservingHeader(
+            "# Task: demo\nstage: execution\nstage_complete: false\n\n## Validation\n- A finding\n",
+        )
 
-        // Then the persisted stage stays validation (CODE-owned), but the body is applied
+        // Then the persisted header stays CODE-owned (validation / true), but the body is applied
         val content = wm.activeTaskContent()!!
         assertTrue(content.contains("stage: validation"))
         assertFalse(content.contains("stage: execution"))
+        assertTrue(content.contains("stage_complete: true"))
+        assertFalse(content.contains("stage_complete: false"))
         assertTrue(content.contains("- A finding"))
+    }
+
+    @Test
+    fun `setStageComplete writes the header field and persists across a fresh instance`() {
+        WorkingMemory(workingDir).apply {
+            createTask("demo")
+            assertTrue(setStageComplete("true"))
+            assertTrue(activeTaskContent()!!.contains("stage_complete: true"))
+        }
+        // Survives a restart (fresh instance over the same dir)
+        assertTrue(WorkingMemory(workingDir).activeTaskContent()!!.contains("stage_complete: true"))
     }
 
     @Test

@@ -70,43 +70,62 @@ class WorkingMemory(private val dir: File) {
     }
 
     /**
-     * Overwrite the active task with [content] but PRESERVE the currently persisted
-     * `stage:` line (Day 13). The stage is CODE-owned (the state machine drives it), so
-     * a model-supplied task update can never regress it. No-op if there is no active task.
+     * Overwrite the active task with [content] but PRESERVE the CODE-owned header fields
+     * (`stage` and `stage_complete`, Day 13). They are driven by the state machine, so a
+     * model-supplied task update can never set or regress them. No-op if there is no active
+     * task. (A field absent from the current file is left to whatever CODE writes next.)
      */
-    fun overwriteActivePreservingStage(content: String) {
+    fun overwriteActivePreservingHeader(content: String) {
         val name = activeTaskName() ?: return
         val file = taskFile(name)
-        val preserved = stageLineValue(file.readText())
-        file.writeText(if (preserved != null) withStageLine(content, preserved) else content)
+        val current = file.readText()
+        var result = content
+        for (key in CODE_OWNED_HEADER_KEYS) {
+            val preserved = headerLineValue(current, key)
+            if (preserved != null) result = withHeaderLine(result, key, preserved)
+        }
+        file.writeText(result)
     }
 
     /**
-     * Set the active task's `stage:` field (Day 13). String-typed on purpose so
-     * this layer stays free of the `task` package — the caller (REPL) validates the
-     * value against the stage enum first.
+     * Set the active task's `stage:` field (Day 13) AND reset `stage_complete: false` — entering
+     * a stage means it isn't complete yet, so the two always move together (one write). String-typed
+     * on purpose so this layer stays free of the `task` package; the caller validates the value first.
      * @return true if updated, false if there is no active task.
      */
-    fun setActiveStage(stageValue: String): Boolean {
+    fun setActiveStage(stageValue: String): Boolean =
+        setHeaderFields(linkedMapOf("stage" to stageValue.trim(), "stage_complete" to "false"))
+
+    /**
+     * Set the active task's CODE-owned `stage_complete:` field (Day 13 / 3c). Persisted in
+     * the header so stage completion survives a restart (CONFIRM pause/resume).
+     * @return true if updated, false if there is no active task.
+     */
+    fun setStageComplete(value: String): Boolean = setHeaderFields(linkedMapOf("stage_complete" to value.trim()))
+
+    /** Apply one or more `<key>: <value>` header lines in a single read+write. */
+    private fun setHeaderFields(fields: Map<String, String>): Boolean {
         val name = activeTaskName() ?: return false
         val file = taskFile(name)
-        file.writeText(withStageLine(file.readText(), stageValue.trim()))
+        var text = file.readText()
+        for ((key, value) in fields) text = withHeaderLine(text, key, value)
+        file.writeText(text)
         return true
     }
 
-    /** The value of the `stage:` header line in [text], or null if there is none. */
-    private fun stageLineValue(text: String): String? =
-        text.lines().firstOrNull { it.trimStart().startsWith("stage:") }
-            ?.substringAfter("stage:")?.trim()
+    /** The value of the `<key>:` header line in [text], or null if there is none. */
+    private fun headerLineValue(text: String, key: String): String? =
+        text.lines().firstOrNull { it.trimStart().startsWith("$key:") }
+            ?.substringAfter("$key:")?.trim()
 
     /**
-     * [text] with its `stage:` line set to [stageValue] — replacing the existing line,
-     * or inserting one right after the `# Task:` header (top if neither exists).
+     * [text] with its `<key>:` line set to [value] — replacing the existing line, or
+     * inserting one right after the `# Task:` header (top if neither exists).
      */
-    private fun withStageLine(text: String, stageValue: String): String {
+    private fun withHeaderLine(text: String, key: String, value: String): String {
         val lines = text.lines().toMutableList()
-        val newLine = "stage: $stageValue"
-        val idx = lines.indexOfFirst { it.trimStart().startsWith("stage:") }
+        val newLine = "$key: $value"
+        val idx = lines.indexOfFirst { it.trimStart().startsWith("$key:") }
         if (idx >= 0) {
             lines[idx] = newLine
         } else {
@@ -130,6 +149,7 @@ class WorkingMemory(private val dir: File) {
     private fun taskTemplate(name: String): String = """
         |# Task: $name
         |stage: planning
+        |stage_complete: false
         |step:
         |expected_action:
         |
@@ -155,4 +175,9 @@ class WorkingMemory(private val dir: File) {
         |-
         |
     """.trimMargin()
+
+    private companion object {
+        /** Header fields the state machine owns; preserved on every model overwrite. */
+        val CODE_OWNED_HEADER_KEYS = listOf("stage", "stage_complete")
+    }
 }
