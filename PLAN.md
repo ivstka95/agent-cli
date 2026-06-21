@@ -22,6 +22,10 @@ buildSystemPrompt() =
 SHORT-TERM memory (history) → goes into `messages` (Day 11)
 ```
 
+Day 15 adds to layer 4: the stage prompt also lists the allowed transitions FROM the current
+stage, read from the `TaskStateMachine` table (single source of truth), so the model proposes
+only legal directions. See Step 5 (Day 15).
+
 Every day adds one layer here. Never scatter system-prompt construction.
 
 The INVARIANTS layer (1) is the FIRST, highest-priority section — emitted before the
@@ -71,6 +75,9 @@ is stored (plain markdown bullets, one invariant per line):
 # Task: <name>
 stage: planning            # Day 13: a VALID state from the enum (CODE-owned)
 stage_complete: false      # Day 13/3c: CODE-owned, persisted (survives restart)
+proposed_transition:       # Day 15: CODE-owned pending direction (set after re-validation;
+                           #   absent until one is pending, so `:next` can accept a backward
+                           #   target after a restart). Cleared on entering a stage.
 step:                      # Day 13: current step within the stage
 expected_action:           # Day 13: what the system expects next
 
@@ -107,7 +114,8 @@ memory/     MemoryStore (facade), ShortTermMemory (in-memory),
             WorkingMemory (tasks + active pointer), LongTermMemory (profile + knowledge)
 profile/    Profile (Day 12)
 task/       TaskState (stage enum), StagePrompts (per-stage system prompt),
-            TaskStateMachine (transitions + rules), Orchestrator (drives the task),
+            TaskStateMachine (transitions + rules; Day 15: + backward rework edges + code
+            re-validation of a model-proposed direction), Orchestrator (drives the task),
             StageController (interface — hook for the swarm), SingleAgentController (variant A)
 invariants/ InvariantStore (flat string list; Day 14). Enforcement is the injected
             code-owned instruction — no separate runtime checker gates turns.
@@ -153,6 +161,12 @@ memory. This keeps dependencies one-directional (`agent → memory`, `agent → 
   the opt-in autonomous chain.
 
 Principle: code rejects clearly-invalid transitions for free; the LLM catches weak artifacts.
+
+- **Day 15 extends this:** `allowedTransitions` gains BACKWARD rework edges and the model gains
+  an OPTIONAL `proposed_transition` (a *direction*). The model proposes per the table (forward
+  only on SUCCESS, backward on problems); then code re-validates that proposal by the SAME table
+  (legal edge) + readiness — code is the final arbiter. "No final without validation" follows
+  structurally (validation→done is proposed only when validation passed). See Step 5.
 
 ---
 
@@ -230,7 +244,10 @@ and no blocking open questions remain).
   CURRENT stage is complete — it does NOT propose the next stage).
 - The NEXT stage is determined by CODE from the transition table
   (planning→execution→validation→done). The model never chooses the next stage — this
-  prevents skipping and invalid stages.
+  prevents skipping and invalid stages. (Day 15 evolves this: the model may ADDITIONALLY
+  propose a *direction* via an optional `proposed_transition` — incl. backward rework — but
+  CODE remains the final arbiter, re-validating the proposal against this SAME table + artifact
+  readiness. The model proposes; code decides. See Step 5.)
 - Two-level validation: **Level 1 (code, cheap, no tokens)** — is the edge legal
   (`allowedTransitions`) AND is the current stage's artifact section non-empty?
   **Level 2 (model)** — `stage_complete` judged against the stage criterion. A
@@ -293,6 +310,9 @@ any self-correction reply, so the user sees progress in real time (not buffered 
   as input (or a neutral default when omitted) — EXCEPT advancing into DONE, which is terminal and
   runs no turn. Refuses (and runs nothing) if not ready (artifact incomplete / not marked complete)
   or already at DONE. `:mode` with no arg shows the current mode.
+- **Day 15 note:** the transition TARGET is generalized from "forward next" to "the
+  model-proposed, code-validated direction (forward on success / backward on rework)". `:next`
+  accepts the proposed direction; both modes still validate in code before performing. See Step 5.
 
 **Display (all from CODE, reliable — not from the model):**
 - REPL prints a `[stage: <stage> · step: <step>]` label with the agent's reply.
@@ -300,7 +320,8 @@ any self-correction reply, so the user sees progress in real time (not buffered 
   (This same notice mechanism will show BLOCKED transitions in Day 15.)
 
 **Architecture:** `TaskState` enum; `StagePrompts`; `TaskStateMachine` (transition table +
-validation); `Orchestrator` (drives the task); `StageController` interface (swarm hook) +
+validation; Day 15 adds backward rework edges + code re-validation of a model-proposed
+direction); `Orchestrator` (drives the task); `StageController` interface (swarm hook) +
 `SingleAgentController` (variant A — one agent, different prompts). Stage persists in the
 task file, surviving restart (pause/resume — reuses Day 11 persistence). The swarm
 (`MultiAgentController`) remains designed-for, NOT implemented.
@@ -360,14 +381,103 @@ instruction; if a thin code helper is kept it only formats the section, it does 
 "no SharedPreferences / EncryptedSharedPreferences", a specific architecture — so the refusal
 is visible on conflict.
 
-### Step 5 — Day 15: Controlled transitions (extends Step 3)
-- `allowedTransitions`: table of legal edges.
-  - FORWARD: planning→execution→validation→done.
-  - BACKWARD for rework: validation→execution (edges both ways where it makes sense).
-- `canTransition(from, to)`: blocks skipping (planning→done is forbidden).
-- Transition condition is REAL artifact readiness, not just "agreed" (the agent is demanding,
-  doesn't accept hand-waving — "the word 'agreed' is not enough").
-- Verify (test): commands like "skip, go to execution" → the agent blocks and explains why.
+### Step 5 — Day 15: Controlled state transitions (extends Step 3)
+**Goal:** make transitions explicitly controlled — legal edges (incl. backward rework), the
+model PROPOSES a direction, CODE validates it, and "no final without validation" falls out
+structurally. Extends Day 13's `TaskStateMachine` WITHOUT breaking pause/resume, persisted
+`stage_complete`, CONFIRM/AUTO, retry/self-correction robustness, or Days 11–12/14.
+
+**1. States & transition table (single source of truth).** States unchanged: `planning`,
+`execution`, `validation`, `done`. `allowedTransitions` gains BACKWARD edges for rework,
+alongside the existing forward edges:
+```
+FORWARD:   planning → execution → validation → done
+BACKWARD:  validation → execution   (rework the implementation)
+           validation → planning    (rework the plan / requirements)
+           execution  → planning    (plan was wrong; replan)
+```
+The table is the SINGLE SOURCE OF TRUTH for what's allowed. "Can't skip a stage" is enforced
+purely by the ABSENCE of an edge: `planning → done` has no edge → illegal. No skip-forward
+edges exist (no planning→validation, no planning→done, no execution→done).
+
+**2. Model proposes, code validates (two-layer control).**
+- The combined structured call gains an OPTIONAL field `proposed_transition` (a target stage,
+  or absent/none). `stage_complete` is UNCHANGED from Day 13 (CODE-owned, persisted, model-reported).
+- The model is TOLD, inside the stage prompt, the allowed transitions FROM the current stage —
+  injected from the table (single source of truth), never hand-written per stage.
+- **Forward only on SUCCESS, not mere completion:** the model proposes a FORWARD transition ONLY
+  if the current stage completed SUCCESSFULLY — done AND without problems/blockers. ("Completed"
+  = `stage_complete`, the work is done; "completed successfully" = done AND no blockers.) For
+  VALIDATION: propose →done ONLY if validation is done AND found NO blockers. If the stage is done
+  but NOT successful (e.g. validation found blockers), it proposes a BACKWARD transition to the
+  stage that needs rework, NOT forward. If the stage isn't finished, it proposes nothing (empty).
+- **Direction carries the verdict:** because forward is proposed only on success, a forward
+  proposal IMPLIES the stage passed; a backward proposal IMPLIES problems were found. There is
+  NO separate "passed" flag — pass/fail is DERIVED from the proposed direction (chosen approach).
+- **"No final without validation" falls out:** validation→done is proposed only when validation
+  passed (no blockers); with blockers the proposal is backward, so `done` is unreachable until the
+  problems are resolved.
+- **Two-layer control (CRITICAL):** the model proposes per the table; then CODE re-checks that
+  proposal against the SAME `TaskStateMachine` table (legal edge) PLUS artifact readiness
+  (Level 1, and Level-2 readiness where applicable). CODE is the FINAL ARBITER — an illegal or
+  unsafe proposal is REJECTED even if the model made it. One table, two checks: model proposes
+  within it, code re-validates by it. Control stays in code, not in trusting the model.
+
+**3. Execution by mode** (reuses Day 13's `TransitionMode`):
+- **CONFIRM (default):** the model's proposed transition is shown to the user
+  (`>>> Proposed transition: <from> → <to>. Type :next to accept.`); performed only on the
+  user's confirmation (`:next` / accepting the proposed direction). One stage per turn —
+  preserves Day 13 pause/resume.
+- **AUTO:** the proposed transition is performed automatically IF the code approved it
+  (legal + ready). Same autonomous chain as Day 13; only now the direction can also be backward.
+- In BOTH modes the code validates BEFORE performing. `:next` reuses the existing
+  `nextStage`/`canTransition`/`isArtifactReady` path, generalized from "forward next" to
+  "the proposed, code-validated target".
+
+**4. Jump attempts & reaction (two layers, demonstrable).**
+- **Code-level block:** an explicit jump attempt (e.g. `:stage done` from planning, or `:next`
+  toward an illegal target) is REJECTED by code with a clear explanation, reusing the Day 13
+  BLOCKED-transition notice: `>>> Blocked: can't go planning → done — that skips stages.
+  Allowed from planning: execution.` (Allowed list printed FROM the table.)
+- **Agent-level explanation:** if the user asks in natural language to skip ("just give me the
+  final solution / skip to done"), the agent REFUSES and explains that stages can't be skipped
+  (driven by the allowed-transitions text in the stage prompt). Both layers demonstrate "can't
+  skip a stage" — code enforces deterministically, the agent explains.
+
+**5. Swarm (later, optional) — extension point, no infra now.** Day 15 builds NO swarm/multi-agent
+infrastructure but stays compatible with adding it later: `ResponseGenerator` remains the
+extension point (a future swarm = an alternative `ResponseGenerator`/orchestrator producing the
+same `GeneratedResponse`, incl. `proposed_transition`); the state machine and transition logic
+operate on task state + artifact readiness, NOT on HOW the artifact was produced, so nothing
+bakes in "single agent". Do NOT design orchestrator infra now (see "Agent swarm" section).
+
+**6. Scope guard.** Day 15 ONLY extends `TaskStateMachine` (backward edges), the structured
+output (optional `proposed_transition`), code re-validation, and mode-aware execution. It MUST
+NOT break Day 13's pause/resume, persisted `stage_complete`, CONFIRM/AUTO, retry/self-correction
+robustness, or Days 11–12/14 (memory, profiles, knowledge, invariants).
+
+**Architecture:** extend `TaskStateMachine` (add backward edges + `allowedTargets`) + `canTransition`;
+add optional `proposed_transition` to the structured-output schema + `GeneratedResponse`;
+`Agent.run` (which plays the Orchestrator role) consumes the proposed direction and runs it
+through `canTransition` + readiness before performing. `StagePrompts` gains the per-stage
+allowed-transitions text + the forward-only-on-success rule. (`StageController` swarm hook unchanged.)
+
+**Implementation notes (as built):**
+- **Forward fallback:** advancement target = `proposed_transition ?: nextStage(stage)`. When the
+  model proposes nothing, CODE falls back to the forward successor (preserves Day 13 behavior and
+  tests). An *illegal* proposal is rejected outright (not downgraded to the fallback).
+- **`proposed_transition` is persisted** in the task header (a CODE-owned field, set only after
+  re-validation) so a backward `:next` works in the default CONFIRM mode and survives a restart;
+  it is kept out of the empty-task template (inserted only when a proposal is pending).
+- **AUTO stops after a backward transition** (a rework boundary): forward moves continue the chain
+  (bounded by DONE), a backward move is performed then the chain stops — guarantees termination.
+- **CONFIRM message:** `>>> Proposed transition: <from> → <to>. Type :next to accept.`
+
+**Verify** (Day 15 requirements): (a) `:stage done` from planning → blocked with the
+table-derived explanation; (b) natural-language "skip to done" → agent refuses & explains;
+(c) validation finds a blocker → model proposes a BACKWARD edge (→execution or →planning), code
+performs it, `done` not reached; (d) clean validation → forward →done; (e) Day 13 pause/resume
+still works (quit mid-task, restart, `:next`). Demo on the secure-storage task.
 
 ---
 
@@ -389,12 +499,16 @@ BASIC (implement in Day 14):
 - Global invariants in `invariants.md` → injected first → refuse + explain on violation.
 - On request/invariant conflict: turn the user away immediately, NO replanning loops.
 
+IMPLEMENTED IN DAY 15:
+- Backward rework edges (validation→execution, validation→planning, execution→planning) — so a
+  problem can return to the stage that needs rework. See Step 5.
+
 DESIGNED FOR, NOT IMPLEMENTED (optional, if time):
 - Per-stage / per-agent invariants (author: "almost every agent has a pack of invariants").
   Structure allows global + optional per-stage; for now GLOBAL only.
-- Return to the SOURCE of a problem (if the root is in planning, go back to planning, not
-  execution — otherwise execution was wasted). Allow different backward edges
-  (validation→planning AND validation→execution); the "find the source" logic comes later.
+- AUTOMATIC "find the SOURCE of a problem" detection (the backward edges exist as of Day 15, but
+  choosing which one — root in planning → go back to planning, not execution, so execution isn't
+  wasted — is currently the model's proposed direction; automatic source detection comes later).
 - Early validation to save tokens (fail on an early stage → don't spend on execution).
 
 NOT NOW (this is the swarm, deferred):

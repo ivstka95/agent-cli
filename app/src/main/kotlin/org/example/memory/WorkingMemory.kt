@@ -94,7 +94,11 @@ class WorkingMemory(private val dir: File) {
      * @return true if updated, false if there is no active task.
      */
     fun setActiveStage(stageValue: String): Boolean =
-        setHeaderFields(linkedMapOf("stage" to stageValue.trim(), "stage_complete" to "false"))
+        setHeaderFields(
+            // Entering a stage also clears any pending proposed transition (Day 15) — a fresh
+            // stage has no validated direction waiting yet.
+            linkedMapOf("stage" to stageValue.trim(), "stage_complete" to "false", "proposed_transition" to ""),
+        )
 
     /**
      * Set the active task's CODE-owned `stage_complete:` field (Day 13 / 3c). Persisted in
@@ -102,6 +106,16 @@ class WorkingMemory(private val dir: File) {
      * @return true if updated, false if there is no active task.
      */
     fun setStageComplete(value: String): Boolean = setHeaderFields(linkedMapOf("stage_complete" to value.trim()))
+
+    /**
+     * Set the active task's CODE-owned `proposed_transition:` field (Day 15) — the pending,
+     * code-validated transition target the user can accept with `:next`. Persisted so a
+     * backward proposal survives a restart. Pass `""` to clear it. String-typed; the caller
+     * passes an already-validated stage value.
+     * @return true if updated, false if there is no active task.
+     */
+    fun setProposedTransition(stageValue: String): Boolean =
+        setHeaderFields(linkedMapOf("proposed_transition" to stageValue.trim()))
 
     /** Apply one or more `<key>: <value>` header lines in a single read+write. */
     private fun setHeaderFields(fields: Map<String, String>): Boolean {
@@ -178,6 +192,6 @@ class WorkingMemory(private val dir: File) {
 
     private companion object {
         /** Header fields the state machine owns; preserved on every model overwrite. */
-        val CODE_OWNED_HEADER_KEYS = listOf("stage", "stage_complete")
+        val CODE_OWNED_HEADER_KEYS = listOf("stage", "stage_complete", "proposed_transition")
     }
 }

@@ -2,6 +2,7 @@ package org.example.agent
 
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
+import org.example.task.TaskState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -165,6 +166,41 @@ class CombinedResponseGeneratorTest {
 
         // Then stageComplete reflects the model's judgment
         assertTrue(result.stageComplete)
+    }
+
+    @Test
+    fun `proposed_transition is parsed into the GeneratedResponse (Day 15)`() = runBlocking {
+        val json =
+            """{"reply":"Reworking.","task_update":"# Task: t\nstage: validation\n","stage_complete":true,"proposed_transition":"execution"}"""
+        val fake = FakeLlmClient(cannedToolInputJson = json)
+        val generator = CombinedResponseGenerator(fake)
+
+        val result = generator.generate("system", listOf(Message(Role.USER, "review")), currentTask = "# Task: t")
+
+        assertEquals(TaskState.EXECUTION, result.proposedTransition)
+    }
+
+    @Test
+    fun `an absent proposed_transition yields null (Day 15)`() = runBlocking {
+        val json = """{"reply":"ok","task_update":"# Task: t\nstage: planning\n","stage_complete":false}"""
+        val fake = FakeLlmClient(cannedToolInputJson = json)
+        val generator = CombinedResponseGenerator(fake)
+
+        val result = generator.generate("system", listOf(Message(Role.USER, "hi")), currentTask = "# Task: t")
+
+        assertNull(result.proposedTransition)
+    }
+
+    @Test
+    fun `an unknown proposed_transition value yields null (Day 15)`() = runBlocking {
+        val json =
+            """{"reply":"ok","task_update":"# Task: t\nstage: planning\n","stage_complete":true,"proposed_transition":"bogus"}"""
+        val fake = FakeLlmClient(cannedToolInputJson = json)
+        val generator = CombinedResponseGenerator(fake)
+
+        val result = generator.generate("system", listOf(Message(Role.USER, "hi")), currentTask = "# Task: t")
+
+        assertNull(result.proposedTransition)
     }
 
     @Test

@@ -24,6 +24,39 @@ object StagePrompts {
         TaskState.DONE -> DONE
     }
 
+    /**
+     * [Day 15] The allowed-transitions guidance for [stage], appended to the stage prompt by
+     * the single assembly point. The [allowedTargets] list is passed in from the
+     * [TaskStateMachine] table (single source of truth) so this never hand-writes the edges.
+     *
+     * It tells the model: these are the ONLY legal moves (so stages can't be skipped, and
+     * natural-language "skip to done" requests must be refused), and how to use the optional
+     * `proposed_transition` field — forward ONLY on success, backward on problems, nothing if
+     * unfinished. Returns "" for a stage with no outgoing edges (DONE), so nothing is injected.
+     */
+    fun transitionGuidance(stage: TaskState, allowedTargets: List<TaskState>): String {
+        if (allowedTargets.isEmpty()) return ""
+        val targets = allowedTargets.joinToString(", ") { it.stageValue }
+        return """
+            # Stage transitions
+            From the current stage (${stage.stageValue}) the ONLY legal moves are: $targets. Stages
+            CANNOT be skipped — if the user asks to skip ahead or jump straight to the final result
+            (e.g. "just give me the final solution", "skip to done"), REFUSE and explain that each
+            stage must be completed in order; you may only move along the transitions listed above.
+
+            Use the optional proposed_transition field to propose ONE of those targets, but ONLY:
+            - a FORWARD move if this stage is fully done AND has NO problems/blockers (completed
+              successfully);
+            - a BACKWARD move (rework) if this stage is done but found problems that belong to an
+              earlier stage — for VALIDATION, propose done ONLY if NO blockers were found; if any
+              were found, propose execution or planning instead, NOT done;
+            - nothing (omit it) if this stage is not finished.
+
+            The direction you propose IS your verdict — there is no separate pass/fail flag. Code
+            re-validates every proposal against these same rules and rejects anything illegal.
+        """.trimIndent()
+    }
+
     private val PLANNING = """
         You are operating in the PLANNING stage of this task. Each stage produces NEW work
         in its OWN section — never echo a previous stage's content; build on it, do not

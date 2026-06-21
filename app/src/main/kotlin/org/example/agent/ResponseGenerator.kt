@@ -1,14 +1,20 @@
 package org.example.agent
 
+import org.example.task.TaskState
+
 /**
  * What a generation produces: a natural reply, plus an optional updated task
  * markdown (auto-extraction into working memory). [taskUpdate] is null when
  * there is no active task, or when generation fell back to a plain reply.
  *
  * [stageComplete] (Day 13 / 3b) is the model's judgment of whether the CURRENT
- * stage's completion criterion is met. It is only about the current stage — the
- * model never proposes the next stage; CODE decides that. Defaults to false (no
- * active task, or fallback).
+ * stage's completion criterion is met. It is only about the current stage.
+ *
+ * [proposedTransition] (Day 15) is the OPTIONAL direction the model proposes to
+ * move toward — forward on success, backward on problems, null if it proposes
+ * nothing. CODE remains the final arbiter: it re-validates this against the
+ * transition table + artifact readiness before performing it. Defaults to null
+ * (no active task, fallback, or no proposal).
  */
 data class GeneratedResponse(
     val reply: String,
@@ -16,6 +22,7 @@ data class GeneratedResponse(
     val inputTokens: Int,
     val outputTokens: Int,
     val stageComplete: Boolean = false,
+    val proposedTransition: TaskState? = null,
 )
 
 /**

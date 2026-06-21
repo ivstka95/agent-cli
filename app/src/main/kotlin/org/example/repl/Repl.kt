@@ -96,20 +96,28 @@ class Repl(
                 }
             }
             ":stage" -> {
-                // Manually set the active task's stage. Validation lives here (against the
-                // stage enum) so WorkingMemory stays string-typed.
+                // [Day 15] Manually set the active task's stage, but ONLY along a legal edge of
+                // the transition table (so a manual jump can't skip stages either). Validation
+                // lives here (against the enum + the table) so WorkingMemory stays string-typed.
                 val target = TaskState.parse(arg)
+                val content = memory.working.activeTaskContent()
                 when {
                     arg.isEmpty() ->
                         out("Usage: :stage <planning|execution|validation|done>")
                     target == null ->
                         out("Invalid stage: '$arg'. Valid: planning, execution, validation, done.")
-                    memory.working.setActiveStage(target.stageValue) -> {
-                        // setActiveStage also resets stage_complete (manual stage → not complete yet).
-                        out("Stage set to ${target.stageValue}.")
-                    }
-                    else ->
+                    content == null ->
                         out("No active task. Create one with :task-new <name>.")
+                    else -> {
+                        val current = TaskHeader.parse(content).stage
+                        if (TaskStateMachine.canTransition(current, target)) {
+                            // setActiveStage also resets stage_complete (manual stage → not complete yet).
+                            memory.working.setActiveStage(target.stageValue)
+                            out("Stage set to ${target.stageValue}.")
+                        } else {
+                            out(blockedTransition(current, target))
+                        }
+                    }
                 }
             }
             ":mode" -> {
@@ -213,23 +221,41 @@ class Repl(
         }
         val header = TaskHeader.parse(content)
         val current = header.stage
-        val next = TaskStateMachine.nextStage(current)
+        // [Day 15] Advance toward the model's PROPOSED, code-validated direction (forward or
+        // backward); when none is pending, fall back to the forward successor (Day 13 behavior).
+        // Readiness is read from the PERSISTED header, so this works after a restart too.
+        val target = header.proposedTransition ?: TaskStateMachine.nextStage(current)
         when {
-            next == null ->
+            target == null ->
                 out("Task is already complete (stage '${current.stageValue}'); nothing to advance.")
+            !TaskStateMachine.canTransition(current, target) ->
+                out(blockedTransition(current, target))
             !TaskStateMachine.isArtifactReady(current, content) ->
                 out("Current stage '${current.stageValue}' is not ready to advance: artifact incomplete.")
             !header.stageComplete ->
                 out("Current stage '${current.stageValue}' is not ready to advance: stage not marked complete.")
-            TaskStateMachine.canTransition(current, next) -> {
-                memory.working.setActiveStage(next.stageValue) // also resets stage_complete for the new stage
-                out(">>> Stage transition: ${current.stageValue} → ${next.stageValue}")
+            else -> {
+                memory.working.setActiveStage(target.stageValue) // also resets stage_complete + pending proposal
+                out(">>> Stage transition: ${current.stageValue} → ${target.stageValue}")
                 // DONE is terminal — no agent turn. Otherwise run the new stage now.
-                if (next != TaskState.DONE) {
+                if (target != TaskState.DONE) {
                     chat(instruction.ifBlank { ADVANCE_INPUT })
                 }
             }
         }
+    }
+
+    /**
+     * [Day 15] The code-level BLOCKED-transition message for an illegal [from] → [to], with the
+     * legal targets listed FROM the transition table (single source of truth). A forward skip is
+     * called out as such; any other illegal move gets a generic phrasing.
+     */
+    private fun blockedTransition(from: TaskState, to: TaskState): String {
+        val allowed = TaskStateMachine.allowedTargets(from)
+        val allowedText = if (allowed.isEmpty()) "none" else allowed.joinToString(", ") { it.stageValue }
+        val reason = if (to.ordinal > from.ordinal) "that skips stages" else "that transition isn't allowed"
+        return ">>> Blocked: can't go ${from.stageValue} → ${to.stageValue} — $reason. " +
+            "Allowed from ${from.stageValue}: $allowedText."
     }
 
     private suspend fun chat(input: String) {
@@ -266,7 +292,7 @@ class Repl(
             out(">>> Stage transition: ${t.from.stageValue} → ${t.to.stageValue}")
         }
         step.pendingTransition?.let { t ->
-            out(">>> Stage '${t.from.stageValue}' complete and ready to advance to '${t.to.stageValue}'. Type :next to continue.")
+            out(">>> Proposed transition: ${t.from.stageValue} → ${t.to.stageValue}. Type :next to accept.")
         }
     }
 

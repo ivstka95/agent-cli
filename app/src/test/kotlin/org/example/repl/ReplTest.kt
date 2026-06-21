@@ -128,7 +128,7 @@ class ReplTest {
         // A chat turn works planning; it completes + is ready, but CONFIRM does NOT advance.
         repl.submit("work the plan")
         assertEquals(TaskState.PLANNING, activeStage(memory), "CONFIRM must not auto-advance")
-        assertTrue(printed("ready to advance to 'execution'"), "should prompt for :next")
+        assertTrue(printed("Proposed transition: planning → execution"), "should prompt for :next")
 
         // :next performs the deferred transition.
         repl.submit(":next")
@@ -151,7 +151,7 @@ class ReplTest {
         repl.submit("work execution") // execution → awaits (does NOT auto-run validation)
 
         assertEquals(TaskState.EXECUTION, activeStage(memory))
-        assertTrue(printed("ready to advance to 'validation'"))
+        assertTrue(printed("Proposed transition: execution → validation"))
     }
 
     // ── AUTO end-to-end ───────────────────────────────────────────────────────────
@@ -198,7 +198,7 @@ class ReplTest {
         assertEquals(1, gen.calls, "the new stage must be run")
         assertEquals(ReplTest.ADVANCE_INPUT, gen.inputs.last(), "no instruction → neutral service input")
         assertEquals(TaskState.EXECUTION, activeStage(memory))
-        assertTrue(printed("ready to advance to 'validation'"), "CONFIRM stops at the next boundary")
+        assertTrue(printed("Proposed transition: execution → validation"), "CONFIRM stops at the next boundary")
     }
 
     @Test
@@ -300,6 +300,69 @@ class ReplTest {
         assertTrue(printed(">>> Stage transition: execution → validation"))
         assertEquals(1, gen.calls, "the new stage runs after the restart-driven advance")
         assertEquals(ReplTest.ADVANCE_INPUT, gen.inputs.last())
+    }
+
+    // ── :stage table validation (Day 15) ─────────────────────────────────────────
+
+    @Test
+    fun `stage sets a legal forward edge`() = runBlocking {
+        val memory = MemoryStore(root)
+        memory.working.createTask("demo")
+        val repl = replWith(memory, complete("x", task("planning")))
+
+        repl.submit(":stage execution")
+
+        assertTrue(printed("Stage set to execution."))
+        assertEquals(TaskState.EXECUTION, activeStage(memory))
+    }
+
+    @Test
+    fun `stage sets a legal backward rework edge`() = runBlocking {
+        val memory = MemoryStore(root)
+        memory.working.createTask("demo")
+        memory.working.setActiveStage("validation")
+        val repl = replWith(memory, complete("x", task("validation")))
+
+        repl.submit(":stage execution")
+
+        assertTrue(printed("Stage set to execution."))
+        assertEquals(TaskState.EXECUTION, activeStage(memory))
+    }
+
+    @Test
+    fun `stage blocks an illegal skip with the allowed-targets message`() = runBlocking {
+        val memory = MemoryStore(root)
+        memory.working.createTask("demo") // planning
+        val repl = replWith(memory, complete("x", task("planning")))
+
+        repl.submit(":stage done")
+
+        assertTrue(printed(">>> Blocked: can't go planning → done — that skips stages. Allowed from planning: execution."))
+        assertEquals(TaskState.PLANNING, activeStage(memory), "the illegal jump must not happen")
+    }
+
+    // ── :next honors a persisted backward proposal (Day 15) ───────────────────────
+
+    @Test
+    fun `next performs a persisted backward proposal (rework) and runs the new stage`() = runBlocking {
+        val memory = MemoryStore(root)
+        memory.working.createTask("demo")
+        // Validation completed with blockers last turn → backward proposal persisted to execution.
+        memory.working.overwriteActive(
+            task("validation", complete = "true", req = "- R", dec = "- D", impl = "- I", valid = "- gap"),
+        )
+        memory.working.setProposedTransition("execution")
+        // Running execution needs input → chain stops there.
+        val gen = ScriptedResponseGenerator(
+            listOf(GeneratedResponse("reworking", taskUpdate = task("execution", req = "- R", dec = "- D", impl = "- I"), inputTokens = 1, outputTokens = 1, stageComplete = false)),
+        )
+        val repl = replWith(memory, gen)
+
+        repl.submit(":next")
+
+        assertTrue(printed(">>> Stage transition: validation → execution"))
+        assertEquals(TaskState.EXECUTION, activeStage(memory), "backward rework target performed, not forward to done")
+        assertEquals(1, gen.calls, "the reworked stage runs")
     }
 
     // ── :invariant-* (Day 14) ─────────────────────────────────────────────────────
