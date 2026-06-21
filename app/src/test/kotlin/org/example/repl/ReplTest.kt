@@ -302,6 +302,101 @@ class ReplTest {
         assertEquals(ReplTest.ADVANCE_INPUT, gen.inputs.last())
     }
 
+    // ── :invariant-* (Day 14) ─────────────────────────────────────────────────────
+
+    @Test
+    fun `invariant-add writes a global invariant`() = runBlocking {
+        val memory = MemoryStore(root)
+        val repl = replWith(memory, complete("x", task("planning")))
+
+        repl.submit(":invariant-add No SharedPreferences or EncryptedSharedPreferences")
+
+        assertTrue(printed("Added invariant."))
+        assertEquals(listOf("No SharedPreferences or EncryptedSharedPreferences"), memory.invariants.list())
+    }
+
+    @Test
+    fun `invariant-list shows a numbered list (and a message when empty)`() = runBlocking {
+        val memory = MemoryStore(root)
+        val repl = replWith(memory, complete("x", task("planning")))
+
+        // Empty first
+        repl.submit(":invariant-list")
+        assertTrue(printed("No invariants yet"))
+
+        // Then numbered after adding
+        repl.submit(":invariant-add Kotlin-only stack")
+        repl.submit(":invariant-add No third-party auth SDKs")
+        repl.submit(":invariant-list")
+        assertTrue(printed("  1. Kotlin-only stack"))
+        assertTrue(printed("  2. No third-party auth SDKs"))
+    }
+
+    @Test
+    fun `invariant-remove removes by exact text`() = runBlocking {
+        val memory = MemoryStore(root)
+        val repl = replWith(memory, complete("x", task("planning")))
+        memory.invariants.add("Kotlin-only stack")
+        memory.invariants.add("No third-party auth SDKs")
+
+        repl.submit(":invariant-remove Kotlin-only stack")
+
+        assertTrue(printed("Removed invariant."))
+        assertEquals(listOf("No third-party auth SDKs"), memory.invariants.list())
+    }
+
+    @Test
+    fun `invariant-remove removes by 1-based index`() = runBlocking {
+        val memory = MemoryStore(root)
+        val repl = replWith(memory, complete("x", task("planning")))
+        memory.invariants.add("A")
+        memory.invariants.add("B")
+        memory.invariants.add("C")
+
+        repl.submit(":invariant-remove 2")
+
+        assertTrue(printed("Removed invariant."))
+        assertEquals(listOf("A", "C"), memory.invariants.list())
+    }
+
+    @Test
+    fun `invariant-remove reports when nothing matches`() = runBlocking {
+        val memory = MemoryStore(root)
+        val repl = replWith(memory, complete("x", task("planning")))
+        memory.invariants.add("A")
+
+        repl.submit(":invariant-remove ghost")
+
+        assertTrue(printed("No matching invariant: 'ghost'"))
+        assertEquals(listOf("A"), memory.invariants.list())
+    }
+
+    @Test
+    fun `invariant-clear empties all invariants`() = runBlocking {
+        val memory = MemoryStore(root)
+        val repl = replWith(memory, complete("x", task("planning")))
+        memory.invariants.add("A")
+        memory.invariants.add("B")
+
+        repl.submit(":invariant-clear")
+
+        assertTrue(printed("Cleared all invariants."))
+        assertTrue(memory.invariants.list().isEmpty())
+    }
+
+    @Test
+    fun `help lists the invariant commands`() = runBlocking {
+        val memory = MemoryStore(root)
+        val repl = replWith(memory, complete("x", task("planning")))
+
+        repl.submit(":help")
+
+        assertTrue(printed(":invariant-add"))
+        assertTrue(printed(":invariant-list"))
+        assertTrue(printed(":invariant-remove"))
+        assertTrue(printed(":invariant-clear"))
+    }
+
     private companion object {
         const val ADVANCE_INPUT = "Proceed with the current stage."
     }

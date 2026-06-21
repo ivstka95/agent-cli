@@ -154,7 +154,7 @@ class Agent(
     //
     // The one place where the final system prompt is built. Days 11–15 compose it
     // here from layers, in this priority order:
-    //   [Day 14] invariants (must never be violated)        — not implemented yet
+    //   [Day 14] invariants (must never be violated)        — below (first/highest)
     //   [Day 12+11] long-term memory (active profile + knowledge) — below
     //   [Day 11]    working memory (active task context)     — below
     //   [Day 13]    current stage prompt                     — below (3a)
@@ -164,7 +164,19 @@ class Agent(
     // at this function.
     // ──────────────────────────────────────────────────────────────────────────
     private fun buildSystemPrompt(activeTask: String?): String = buildString {
-        // [Day 14] Invariants would be prepended here, with highest priority.
+        // [Day 14] Invariants: the FIRST, highest-priority section so they frame
+        // everything below. Enforcement is this CODE-owned instruction (the agent
+        // checks/refuses via the prompt — there is no runtime checker). Nothing is
+        // injected when there are no invariants. They live in the system prompt, so
+        // they apply across ALL stages (planning/execution/validation).
+        val invariants = memory.invariants.list()
+        if (invariants.isNotEmpty()) {
+            appendLine("# Invariants (MUST NOT be violated)")
+            appendLine(INVARIANTS_INSTRUCTION)
+            appendLine()
+            invariants.forEach { appendLine("- $it") }
+            appendLine()
+        }
 
         // [Day 12] Personalization: the ACTIVE user profile (switchable via the
         // :profile-* commands), injected automatically into every request.
@@ -199,5 +211,18 @@ class Agent(
     private companion object {
         const val BASE_INSTRUCTION =
             "You are a helpful CLI assistant. Use the profile, knowledge, and active task above as context for your reply."
+
+        /**
+         * [Day 14] CODE-owned invariant enforcement instruction (fixed in code, never user text).
+         * Prepended to the invariant lines as the highest-priority section.
+         */
+        const val INVARIANTS_INSTRUCTION =
+            "These are hard, non-negotiable constraints on this work. Before proposing ANY " +
+                "solution, decision, or design, check it against every invariant below. If a " +
+                "request — or your own proposed solution — would violate an invariant, you MUST " +
+                "NOT propose the violating solution. Instead: (a) refuse the violating approach, " +
+                "(b) state explicitly which invariant it violates and why, and (c) propose an " +
+                "alternative that satisfies ALL invariants. Never work around an invariant by " +
+                "substituting a different violation."
     }
 }
