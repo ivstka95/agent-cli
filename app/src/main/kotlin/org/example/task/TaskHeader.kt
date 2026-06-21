@@ -14,6 +14,13 @@ data class TaskHeader(
     val expectedAction: String,
     /** CODE-owned (Day 13 / 3c): whether the model has marked the CURRENT stage complete. */
     val stageComplete: Boolean,
+    /**
+     * CODE-owned (Day 15): the pending, code-validated transition target the user can
+     * accept with `:next` — the model's proposed direction after CODE re-validated it.
+     * Persisted so a backward proposal survives a restart; null when none is pending
+     * (or the field is absent/invalid).
+     */
+    val proposedTransition: TaskState?,
 ) {
     companion object {
         /** Parse the header fields from task markdown (null/blank → all defaults). */
@@ -29,6 +36,7 @@ data class TaskHeader(
                 step = field("step"),                                          // missing → ""
                 expectedAction = field("expected_action"),                     // missing → ""
                 stageComplete = field("stage_complete").equals("true", ignoreCase = true), // missing → false
+                proposedTransition = TaskState.parse(field("proposed_transition")),         // missing/invalid → null
             )
         }
     }

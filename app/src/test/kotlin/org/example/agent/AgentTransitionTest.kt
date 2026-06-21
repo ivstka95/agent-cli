@@ -88,11 +88,25 @@ class AgentTransitionTest {
     private fun complete(reply: String, taskUpdate: String) =
         GeneratedResponse(reply, taskUpdate = taskUpdate, inputTokens = 1, outputTokens = 1, stageComplete = true)
 
+    /** [Day 15] A complete response that also PROPOSES a direction (forward or backward). */
+    private fun proposing(reply: String, taskUpdate: String, target: TaskState) =
+        GeneratedResponse(
+            reply,
+            taskUpdate = taskUpdate,
+            inputTokens = 1,
+            outputTokens = 1,
+            stageComplete = true,
+            proposedTransition = target,
+        )
+
     private fun activeStage(memory: MemoryStore): TaskState =
         TaskHeader.parse(memory.working.activeTaskContent()!!).stage
 
     private fun activeStageComplete(memory: MemoryStore): Boolean =
         TaskHeader.parse(memory.working.activeTaskContent()!!).stageComplete
+
+    private fun activeProposed(memory: MemoryStore): TaskState? =
+        TaskHeader.parse(memory.working.activeTaskContent()!!).proposedTransition
 
     @Test
     fun `chain advances through every stage to DONE in a single turn`() = runBlocking {
@@ -282,6 +296,102 @@ class AgentTransitionTest {
         // Advanced to execution, and the new stage is not marked complete.
         assertEquals(TaskState.EXECUTION, activeStage(memory))
         assertFalse(activeStageComplete(memory))
+    }
+
+    // ── Day 15: model proposes a direction, CODE re-validates ─────────────────────
+
+    @Test
+    fun `a forward proposal is performed when it is legal and ready (AUTO)`() = runBlocking {
+        val memory = MemoryStore(root)
+        memory.working.createTask("demo")
+        // Planning proposes EXECUTION (forward) with its artifact filled; execution then needs input.
+        val gen = ScriptedResponseGenerator(
+            listOf(
+                proposing("planned", task("planning", req = "- R", dec = "- D"), TaskState.EXECUTION),
+                GeneratedResponse("need input", taskUpdate = task("execution", req = "- R", dec = "- D"), inputTokens = 1, outputTokens = 1, stageComplete = false),
+            ),
+        )
+        val agent = Agent(gen, memory)
+
+        val response = agent.run("go", history = emptyList(), mode = TransitionMode.AUTO)
+
+        assertEquals(TaskState.EXECUTION, response.steps[0].transition?.to)
+        assertEquals(TaskState.EXECUTION, activeStage(memory))
+    }
+
+    @Test
+    fun `a backward proposal is performed and the AUTO chain stops at the rework boundary`() = runBlocking {
+        val memory = MemoryStore(root)
+        memory.working.createTask("demo")
+        memory.working.setActiveStage("validation")
+        // Validation finds blockers → proposes EXECUTION (backward). Even in AUTO, the chain stops
+        // after a backward move (no ping-pong), so DONE is NOT reached.
+        val gen = ScriptedResponseGenerator(
+            listOf(
+                proposing("found blockers", task("validation", req = "- R", dec = "- D", impl = "- I", valid = "- gap"), TaskState.EXECUTION),
+            ),
+        )
+        val agent = Agent(gen, memory)
+
+        val response = agent.run("review it", history = emptyList(), mode = TransitionMode.AUTO)
+
+        assertEquals(1, gen.calls, "stops after the single backward move")
+        assertEquals(TaskState.EXECUTION, response.steps[0].transition?.to)
+        assertEquals(TaskState.EXECUTION, activeStage(memory))
+    }
+
+    @Test
+    fun `an illegal proposed jump is rejected by code even when the stage is complete (AUTO)`() = runBlocking {
+        val memory = MemoryStore(root)
+        memory.working.createTask("demo")
+        // Planning proposes DONE (a skip) with everything filled — code rejects it (no such edge).
+        val gen = ScriptedResponseGenerator(
+            listOf(proposing("skip ahead", task("planning", req = "- R", dec = "- D", impl = "- I", valid = "- V"), TaskState.DONE)),
+        )
+        val agent = Agent(gen, memory)
+
+        val response = agent.run("go", history = emptyList(), mode = TransitionMode.AUTO)
+
+        assertEquals(1, gen.calls)
+        assertNull(response.steps[0].transition, "an illegal proposal performs no transition")
+        assertEquals(TaskState.PLANNING, activeStage(memory), "stays on planning — no fallback to forward")
+    }
+
+    @Test
+    fun `no final without validation - a forward validation proposal reaches DONE when ready`() = runBlocking {
+        val memory = MemoryStore(root)
+        memory.working.createTask("demo")
+        memory.working.setActiveStage("validation")
+        // Clean validation (no blockers) proposes DONE (forward).
+        val gen = ScriptedResponseGenerator(
+            listOf(proposing("all good", task("validation", req = "- R", dec = "- D", impl = "- I", valid = "- all checked"), TaskState.DONE)),
+        )
+        val agent = Agent(gen, memory)
+
+        val response = agent.run("review it", history = emptyList(), mode = TransitionMode.AUTO)
+
+        assertEquals(TaskState.DONE, response.steps.last().transition?.to)
+        assertEquals(TaskState.DONE, activeStage(memory))
+    }
+
+    @Test
+    fun `CONFIRM persists the proposed direction (incl backward) for next to accept`() = runBlocking {
+        val memory = MemoryStore(root)
+        memory.working.createTask("demo")
+        memory.working.setActiveStage("validation")
+        val gen = ScriptedResponseGenerator(
+            listOf(proposing("rework needed", task("validation", req = "- R", dec = "- D", impl = "- I", valid = "- gap"), TaskState.EXECUTION)),
+        )
+        val agent = Agent(gen, memory)
+
+        val response = agent.run("review it", history = emptyList(), mode = TransitionMode.CONFIRM)
+
+        // Deferred (not performed), and the backward direction is persisted for `:next`.
+        assertNull(response.steps[0].transition)
+        assertEquals(TaskState.EXECUTION, response.steps[0].pendingTransition?.to)
+        assertEquals(TaskState.VALIDATION, activeStage(memory), "CONFIRM does not advance")
+        assertTrue(activeStageComplete(memory))
+        assertEquals(TaskState.EXECUTION, activeProposed(memory), "the validated backward target is persisted")
     }
 
     @Test

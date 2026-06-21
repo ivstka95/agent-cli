@@ -6,9 +6,11 @@ package org.example.task
  * uses this to decide whether a stage may advance; the MODEL only reports whether
  * the current stage is complete (`stage_complete`), it never picks the next stage.
  *
- * Forward-only for now (PLANNING → EXECUTION → VALIDATION → DONE). Day 15 adds
- * backward edges for rework (e.g. validation → execution); the table generalizes
- * there without touching callers.
+ * The table is the SINGLE SOURCE OF TRUTH for what's allowed. Forward edges
+ * (PLANNING → EXECUTION → VALIDATION → DONE) advance the work; Day 15 adds
+ * BACKWARD rework edges (e.g. validation → execution) so a problem can return to
+ * the stage that needs fixing. "Can't skip a stage" is enforced purely by the
+ * ABSENCE of an edge (there is no planning → done edge).
  */
 object TaskStateMachine {
 
@@ -19,11 +21,30 @@ object TaskStateMachine {
         TaskState.VALIDATION to TaskState.DONE,
     )
 
+    /**
+     * [Day 15] Legal BACKWARD edges for rework: a stage that found problems can
+     * return to an earlier stage. Kept separate from [forward] so [nextStage]
+     * stays the single forward successor (the auto-transition / fallback target).
+     */
+    private val backward: Map<TaskState, Set<TaskState>> = mapOf(
+        TaskState.VALIDATION to setOf(TaskState.EXECUTION, TaskState.PLANNING),
+        TaskState.EXECUTION to setOf(TaskState.PLANNING),
+    )
+
     /** The stage that follows [current] in the table, or null if [current] is terminal (DONE). */
     fun nextStage(current: TaskState): TaskState? = forward[current]
 
-    /** Whether [current] → [next] is a legal edge in the transition table. */
-    fun canTransition(current: TaskState, next: TaskState): Boolean = forward[current] == next
+    /**
+     * [Day 15] The stages [current] may legally transition TO — its forward
+     * successor first, then any backward rework targets. Drives the allowed-
+     * transitions text in the stage prompt and the blocked-transition message,
+     * both derived from this same table (single source of truth).
+     */
+    fun allowedTargets(current: TaskState): List<TaskState> =
+        listOfNotNull(forward[current]) + backward[current].orEmpty()
+
+    /** Whether [current] → [next] is a legal edge in the transition table (forward or backward). */
+    fun canTransition(current: TaskState, next: TaskState): Boolean = next in allowedTargets(current)
 
     /**
      * The artifact section(s) a stage must fill before it may advance. These are

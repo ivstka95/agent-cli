@@ -75,6 +75,9 @@ is stored (plain markdown bullets, one invariant per line):
 # Task: <name>
 stage: planning            # Day 13: a VALID state from the enum (CODE-owned)
 stage_complete: false      # Day 13/3c: CODE-owned, persisted (survives restart)
+proposed_transition:       # Day 15: CODE-owned pending direction (set after re-validation;
+                           #   absent until one is pending, so `:next` can accept a backward
+                           #   target after a restart). Cleared on entering a stage.
 step:                      # Day 13: current step within the stage
 expected_action:           # Day 13: what the system expects next
 
@@ -453,11 +456,22 @@ output (optional `proposed_transition`), code re-validation, and mode-aware exec
 NOT break Day 13's pause/resume, persisted `stage_complete`, CONFIRM/AUTO, retry/self-correction
 robustness, or Days 11–12/14 (memory, profiles, knowledge, invariants).
 
-**Architecture:** extend `TaskStateMachine.allowedTransitions` (add backward edges) + `canTransition`;
+**Architecture:** extend `TaskStateMachine` (add backward edges + `allowedTargets`) + `canTransition`;
 add optional `proposed_transition` to the structured-output schema + `GeneratedResponse`;
-`Orchestrator` consumes the proposed direction and runs it through `canTransition` + readiness
-before performing. `StagePrompts` gains the per-stage allowed-transitions text + the
-forward-only-on-success rule. (`StageController` swarm hook unchanged.)
+`Agent.run` (which plays the Orchestrator role) consumes the proposed direction and runs it
+through `canTransition` + readiness before performing. `StagePrompts` gains the per-stage
+allowed-transitions text + the forward-only-on-success rule. (`StageController` swarm hook unchanged.)
+
+**Implementation notes (as built):**
+- **Forward fallback:** advancement target = `proposed_transition ?: nextStage(stage)`. When the
+  model proposes nothing, CODE falls back to the forward successor (preserves Day 13 behavior and
+  tests). An *illegal* proposal is rejected outright (not downgraded to the fallback).
+- **`proposed_transition` is persisted** in the task header (a CODE-owned field, set only after
+  re-validation) so a backward `:next` works in the default CONFIRM mode and survives a restart;
+  it is kept out of the empty-task template (inserted only when a proposal is pending).
+- **AUTO stops after a backward transition** (a rework boundary): forward moves continue the chain
+  (bounded by DONE), a backward move is performed then the chain stops — guarantees termination.
+- **CONFIRM message:** `>>> Proposed transition: <from> → <to>. Type :next to accept.`
 
 **Verify** (Day 15 requirements): (a) `:stage done` from planning → blocked with the
 table-derived explanation; (b) natural-language "skip to done" → agent refuses & explains;

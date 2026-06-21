@@ -19,13 +19,40 @@ class TaskStateMachineTest {
     }
 
     @Test
-    fun `canTransition allows forward edges and rejects skips and backward edges`() {
+    fun `canTransition allows forward edges`() {
         assertTrue(TaskStateMachine.canTransition(TaskState.PLANNING, TaskState.EXECUTION))
-        // Skip forward is not a legal edge
+        assertTrue(TaskStateMachine.canTransition(TaskState.EXECUTION, TaskState.VALIDATION))
+        assertTrue(TaskStateMachine.canTransition(TaskState.VALIDATION, TaskState.DONE))
+    }
+
+    @Test
+    fun `canTransition allows backward rework edges (Day 15)`() {
+        assertTrue(TaskStateMachine.canTransition(TaskState.VALIDATION, TaskState.EXECUTION))
+        assertTrue(TaskStateMachine.canTransition(TaskState.VALIDATION, TaskState.PLANNING))
+        assertTrue(TaskStateMachine.canTransition(TaskState.EXECUTION, TaskState.PLANNING))
+    }
+
+    @Test
+    fun `canTransition rejects skips - the absence of an edge enforces no-skipping`() {
         assertFalse(TaskStateMachine.canTransition(TaskState.PLANNING, TaskState.VALIDATION))
         assertFalse(TaskStateMachine.canTransition(TaskState.PLANNING, TaskState.DONE))
-        // Backward is Day 15, not now
-        assertFalse(TaskStateMachine.canTransition(TaskState.EXECUTION, TaskState.PLANNING))
+        assertFalse(TaskStateMachine.canTransition(TaskState.EXECUTION, TaskState.DONE))
+        // DONE is terminal — no outgoing edges at all.
+        assertFalse(TaskStateMachine.canTransition(TaskState.DONE, TaskState.PLANNING))
+    }
+
+    @Test
+    fun `allowedTargets lists the forward successor first, then backward rework targets`() {
+        assertEquals(listOf(TaskState.EXECUTION), TaskStateMachine.allowedTargets(TaskState.PLANNING))
+        assertEquals(
+            listOf(TaskState.VALIDATION, TaskState.PLANNING),
+            TaskStateMachine.allowedTargets(TaskState.EXECUTION),
+        )
+        assertEquals(
+            listOf(TaskState.DONE, TaskState.EXECUTION, TaskState.PLANNING),
+            TaskStateMachine.allowedTargets(TaskState.VALIDATION),
+        )
+        assertEquals(emptyList(), TaskStateMachine.allowedTargets(TaskState.DONE))
     }
 
     // ── Level-1 artifact readiness ──────────────────────────────────────────────

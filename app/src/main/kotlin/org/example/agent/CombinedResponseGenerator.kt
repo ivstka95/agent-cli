@@ -9,6 +9,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import org.example.task.TaskState
 
 /**
  * Day 11's default [ResponseGenerator]: ONE structured (forced tool-use) call
@@ -85,6 +86,9 @@ class CombinedResponseGenerator(private val llmClient: LlmClient) : ResponseGene
             inputTokens = inputTokens,
             outputTokens = outputTokens,
             stageComplete = parsed.stageComplete,
+            // [Day 15] The model's proposed direction (forward/backward), or null if it
+            // proposed nothing or named an unknown stage. CODE re-validates it downstream.
+            proposedTransition = TaskState.parse(parsed.proposedTransition),
         )
 
     @Serializable
@@ -93,6 +97,8 @@ class CombinedResponseGenerator(private val llmClient: LlmClient) : ResponseGene
         @SerialName("task_update") val taskUpdate: String,
         // Optional (default false) so an omitted field never breaks parsing.
         @SerialName("stage_complete") val stageComplete: Boolean = false,
+        // [Day 15] Optional proposed transition target (stage name), or null/absent for none.
+        @SerialName("proposed_transition") val proposedTransition: String? = null,
     )
 
     private companion object {
@@ -144,8 +150,15 @@ class CombinedResponseGenerator(private val llmClient: LlmClient) : ResponseGene
               specifics), NOT a restatement of the requirements/decisions; VALIDATION —
               ## Validation contains actual review findings checked against each requirement
               (or their justified absence), NOT a restatement of the plan or design; DONE —
-              terminal. Otherwise set false. Do NOT propose or name the next stage — the
-              system decides transitions.
+              terminal. Otherwise set false.
+            - proposed_transition: OPTIONAL. The stage you propose moving TO. Choose ONLY from
+              the allowed transitions listed in the system prompt's stage-transitions section.
+              Propose a FORWARD target ONLY if this stage completed SUCCESSFULLY (done AND no
+              problems/blockers). If this stage is done but found problems needing rework,
+              propose a BACKWARD target instead (e.g. validation that found blockers proposes
+              execution or planning, NOT done). If the stage is not finished, OMIT this field.
+              The direction IS your verdict — there is no separate pass/fail flag. The system
+              re-validates your proposal against the same rules and rejects anything illegal.
         """.trimIndent()
 
         /** JSON Schema for the {reply, task_update} tool input (strict). */
@@ -164,6 +177,14 @@ class CombinedResponseGenerator(private val llmClient: LlmClient) : ResponseGene
                 putJsonObject("stage_complete") {
                     put("type", "boolean")
                     put("description", "True only if the CURRENT stage's completion criterion is fully met.")
+                }
+                putJsonObject("proposed_transition") {
+                    put("type", "string")
+                    put(
+                        "description",
+                        "Optional. The stage to move TO, chosen from the allowed transitions in the " +
+                            "system prompt (forward on success, backward on problems). Omit for none.",
+                    )
                 }
             }
             putJsonArray("required") {

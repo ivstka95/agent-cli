@@ -76,6 +76,8 @@ class Agent(
             outputTokens += gen.outputTokens
             var content = memory.working.activeTaskContent()!!
             var stageComplete = gen.stageComplete
+            // [Day 15] The model's proposed direction this step (forward/backward), or null.
+            var proposed = gen.proposedTransition
             var refinement: Refinement? = null
 
             // [Day 13 / 3b] One-shot self-correction: the model marked the stage complete but
@@ -93,35 +95,47 @@ class Agent(
                 outputTokens += followup.outputTokens
                 content = memory.working.activeTaskContent()!!
                 stageComplete = followup.stageComplete
+                proposed = followup.proposedTransition
                 refinement = Refinement(stage, followup.reply)
             }
 
-            // Transition decision (CODE picks the next stage; the model never does).
+            // [Day 15] Two-layer control: the model PROPOSES a direction, CODE re-validates it
+            // against the SAME table. When the model proposes nothing, fall back to the forward
+            // successor (Day 13 behavior). An illegal proposal is rejected here (canTransition).
+            val target = proposed ?: next
             val canAdvance = stageComplete &&
-                next != null &&
-                TaskStateMachine.canTransition(stage, next) &&
+                target != null &&
+                TaskStateMachine.canTransition(stage, target) &&
                 TaskStateMachine.isArtifactReady(stage, content)
 
             if (canAdvance) {
-                // Defensive: every advance must move strictly forward, so the loop
-                // can never spin on the same stage.
-                check(next!!.ordinal > stage.ordinal) { "non-forward transition $stage → $next" }
+                // canAdvance guarantees a non-null, legal, ready edge.
+                val dest = target!!
                 if (mode == TransitionMode.CONFIRM) {
-                    // [3c] Complete + ready, but DEFER the transition: persist completion in the
-                    // header (so it survives a restart) and stop — the user advances with `:next`.
+                    // [3c] Complete + ready, but DEFER: persist completion AND the validated
+                    // direction (so a backward `:next` survives a restart) and stop — the user
+                    // accepts with `:next`.
                     memory.working.setStageComplete("true")
-                    emit(ChainStep(stage, gen.reply, refinement, pendingTransition = StageTransition(stage, next)))
+                    memory.working.setProposedTransition(dest.stageValue)
+                    emit(ChainStep(stage, gen.reply, refinement, pendingTransition = StageTransition(stage, dest)))
                     break
                 }
-                // [AUTO] Advance now (setActiveStage also resets stage_complete for the new stage).
-                memory.working.setActiveStage(next.stageValue)
-                emit(ChainStep(stage, gen.reply, refinement, StageTransition(stage, next)))
-                if (next == TaskState.DONE) break // reached DONE → task finished
-                // else CONTINUE: immediately work the new stage.
+                // [AUTO] Advance now (setActiveStage resets stage_complete and clears the pending
+                // proposal for the new stage).
+                memory.working.setActiveStage(dest.stageValue)
+                emit(ChainStep(stage, gen.reply, refinement, StageTransition(stage, dest)))
+                if (dest == TaskState.DONE) break // reached DONE → task finished
+                // A backward move (ordinal decreases) is a rework boundary: STOP so the chain can't
+                // ping-pong — only forward moves continue the loop (guarantees termination).
+                if (dest.ordinal <= stage.ordinal) break
+                // else CONTINUE: immediately work the new (later) stage.
             } else {
                 // STOP: the model needs input (not complete), or the stage stalled (complete but
-                // artifact still not ready). Persist the model's completion judgment for this stage.
+                // artifact still not ready), or its proposal was rejected. Persist the model's
+                // completion judgment; clear any stale pending proposal — but ONLY if one was set,
+                // so a plain chat turn (no proposal) leaves the task file untouched.
                 memory.working.setStageComplete(stageComplete.toString())
+                if (TaskHeader.parse(content).proposedTransition != null) memory.working.setProposedTransition("")
                 emit(ChainStep(stage, gen.reply, refinement))
                 break
             }
@@ -203,6 +217,15 @@ class Agent(
             appendLine("# Current stage: ${stage.stageValue}")
             appendLine(StagePrompts.forStage(stage).trim())
             appendLine()
+
+            // [Day 15] Allowed-transitions guidance, derived from the SAME transition table
+            // (single source of truth) so the model proposes only legal directions. Empty for
+            // terminal stages (DONE) → nothing injected.
+            val guidance = StagePrompts.transitionGuidance(stage, TaskStateMachine.allowedTargets(stage))
+            if (guidance.isNotEmpty()) {
+                appendLine(guidance)
+                appendLine()
+            }
         }
 
         append(BASE_INSTRUCTION)
