@@ -24,6 +24,18 @@ SHORT-TERM memory (history) → goes into `messages` (Day 11)
 
 Every day adds one layer here. Never scatter system-prompt construction.
 
+The INVARIANTS layer (1) is the FIRST, highest-priority section — emitted before the
+profile/long-term section and before the stage prompt, so it frames everything below it.
+It carries a CODE-owned instruction (fixed in code, NOT user text): the invariants are
+non-negotiable; before proposing any solution/decision/design the agent must check it
+against every invariant; if a request or its own proposed solution would violate one, it
+must NOT propose the violating solution — instead refuse it, name which invariant is
+violated and why, and propose an alternative that satisfies ALL invariants (never work
+around an invariant via a different violation). If there are no invariants, NOTHING is
+injected (no empty header). Because invariants live in the system prompt, they apply across
+ALL stages (planning / execution / validation) — this also lets validation catch invariant
+violations. See Step 4 (Day 14) for the full design.
+
 ---
 
 ## File storage (everything on files; `memory/` at project root, gitignored)
@@ -36,8 +48,23 @@ memory/
   working/
     tasks/<name>.md    — Days 11+13: task (strict structure + stage field). AUTO-extracted.
     active             — pointer to the active task (plain text: task name).
-  invariants.md        — Day 14: hard rules, separate from the dialog.
+  invariants.md        — Day 14: GLOBAL hard rules (flat list), separate from the dialog.
 ```
+
+### Invariants file structure
+`memory/invariants.md` holds a FLAT LIST of invariant lines, mirroring how `knowledge.md`
+is stored (plain markdown bullets, one invariant per line):
+```markdown
+- No SharedPreferences or EncryptedSharedPreferences
+- Kotlin-only stack; no third-party auth SDKs
+- Clean Architecture: domain depends on nothing framework-specific
+```
+- **Global**, not per-task: one file applies to ALL tasks (no per-task invariant files).
+- **String-typed:** `InvariantStore` returns `List<String>` of lines — `memory/` stays free
+  of any `task.*` imports (same one-directional dependency discipline as the rest of `memory/`).
+- **Missing/empty file = no invariants** (nothing is injected; never crashes).
+- Stored separately from the dialog (file, not history) — satisfies the Day 14
+  "stored separately" requirement. Manual editing + REPL commands (see Step 4).
 
 ### Strict task-file structure
 ```markdown
@@ -82,7 +109,8 @@ profile/    Profile (Day 12)
 task/       TaskState (stage enum), StagePrompts (per-stage system prompt),
             TaskStateMachine (transitions + rules), Orchestrator (drives the task),
             StageController (interface — hook for the swarm), SingleAgentController (variant A)
-invariants/ InvariantStore, InvariantChecker (Day 14)
+invariants/ InvariantStore (flat string list; Day 14). Enforcement is the injected
+            code-owned instruction — no separate runtime checker gates turns.
 repl/       Repl (commands)  [exists, extended]
 Main.kt     [exists]
 llm/        AnthropicClient (Ktor)  [exists]
@@ -282,13 +310,55 @@ stage); auto-transitions occur with validation; pause at any stage and resume wi
 re-explaining (restart → stage persisted → continue). Demo on the secure-storage task.
 
 ### Step 4 — Day 14: Invariants
-- `invariants.md` — hard rules, separate from the dialog.
-- Injected into the system prompt FIRST (highest priority).
-- `InvariantChecker`: the agent explicitly considers invariants, REFUSES to violate, explains.
-- On conflict between a request and an invariant: TURN THE USER AWAY immediately (refuse +
-  explain), NO replanning loops (simpler/cheaper, and exactly the Day 14 requirement).
-- Demo invariants (meaningful ones): e.g. Kotlin-only stack, no third-party auth SDKs, a
-  specific architecture — so the refusal is visible on conflict.
+**Purpose:** invariants are hard constraints the agent must NEVER violate — architecture,
+technical decisions, stack constraints, business rules. Requirements: stored separately from
+the dialog; explicitly considered in the agent's reasoning; the agent refuses solutions that
+violate them.
+
+**Storage:** a GLOBAL `memory/invariants.md` — a FLAT LIST of invariant lines, mirroring
+`knowledge.md` (see "Invariants file structure" in File storage). String-typed
+(`InvariantStore` → `List<String>`); `memory/` stays free of `task.*` imports.
+Missing/empty file = no invariants. Global (all tasks), not per-task.
+
+**Injection (single assembly point):** invariants are injected as the FIRST, highest-priority
+section of `buildSystemPrompt()` — before the profile/long-term section and before the stage
+prompt — so they frame everything. The section carries a CODE-owned instruction (fixed in
+code, NOT user text):
+- the invariants are non-negotiable;
+- before proposing any solution/decision/design the agent must check it against EVERY invariant;
+- if a request, or its own proposed solution, would violate one, it must NOT propose the
+  violating solution — instead refuse it, name WHICH invariant is violated and WHY, and propose
+  an alternative that satisfies ALL invariants (never work around an invariant via a different
+  violation).
+
+If there are no invariants, nothing is injected. Because they live in the system prompt,
+invariants apply across ALL stages (planning / execution / validation) — this also lets
+validation catch invariant violations.
+
+**On conflict** between a request and an invariant: TURN THE USER AWAY immediately (refuse +
+explain), NO replanning loops (simpler/cheaper, and exactly the Day 14 requirement). The
+refusal-and-alternative behavior is driven entirely by the injected code-owned instruction —
+there is no separate code-level "checker" gating turns; the agent does the checking via the
+system prompt.
+
+**REPL commands** (mirror the `:profile-*` style):
+- `:invariant-add <text>` — append an invariant line.
+- `:invariant-list` — list current invariants (numbered).
+- `:invariant-remove <text or index>` — remove by exact text or by 1-based index.
+- `:invariant-clear` (optional) — remove all invariants.
+- Manual editing of `memory/invariants.md` also works.
+
+**Scope guard (Day 14 is purely additive):** this layer does NOT change the task state
+machine, transition modes (CONFIRM/AUTO), the autonomous chain, `stage_complete`, or retry /
+self-correction logic. Invariants are orthogonal — added ONLY to the system prompt.
+
+**Architecture:** `InvariantStore` (load/append/remove/clear the flat list; string-typed).
+(No separate `InvariantChecker` runtime gate is needed — enforcement is the injected
+instruction; if a thin code helper is kept it only formats the section, it does not block turns.)
+
+**Demo invariants** (meaningful ones): e.g. Kotlin-only stack, no third-party auth SDKs,
+"no SharedPreferences / EncryptedSharedPreferences", a specific architecture — so the refusal
+is visible on conflict.
 
 ### Step 5 — Day 15: Controlled transitions (extends Step 3)
 - `allowedTransitions`: table of legal edges.

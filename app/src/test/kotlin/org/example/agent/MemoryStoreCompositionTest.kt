@@ -173,6 +173,73 @@ class MemoryStoreCompositionTest {
     }
 
     @Test
+    fun `invariants are injected with the must-not-violate framing and every line`() = runBlocking {
+        // Given a store with two invariants and an active task
+        seedLongTerm()
+        val memory = MemoryStore(root)
+        memory.invariants.add("No SharedPreferences or EncryptedSharedPreferences")
+        memory.invariants.add("Kotlin-only stack")
+        memory.working.createTask("demo")
+
+        val fake = FakeResponseGenerator(GeneratedResponse("ok", taskUpdate = null, inputTokens = 1, outputTokens = 1))
+        val agent = Agent(fake, memory)
+
+        // When the agent runs
+        agent.run("hi", history = emptyList())
+
+        // Then the invariants section, its enforcement framing, and every line are present
+        val prompt = fake.receivedSystemPrompt!!
+        assertTrue(prompt.contains("# Invariants (MUST NOT be violated)"), "missing invariants header")
+        assertTrue(prompt.contains("you MUST NOT propose the violating solution"), "missing refuse framing")
+        assertTrue(prompt.contains("propose an alternative that satisfies ALL invariants"), "missing alternative framing")
+        assertTrue(prompt.contains("- No SharedPreferences or EncryptedSharedPreferences"), "missing invariant line 1")
+        assertTrue(prompt.contains("- Kotlin-only stack"), "missing invariant line 2")
+    }
+
+    @Test
+    fun `invariants are injected FIRST, before the profile and stage sections`() = runBlocking {
+        // Given a store with an invariant and an active task (so a stage section exists)
+        seedLongTerm()
+        val memory = MemoryStore(root)
+        memory.invariants.add("Kotlin-only stack")
+        memory.working.createTask("demo")
+
+        val fake = FakeResponseGenerator(GeneratedResponse("ok", taskUpdate = null, inputTokens = 1, outputTokens = 1))
+        val agent = Agent(fake, memory)
+
+        // When the agent runs
+        agent.run("hi", history = emptyList())
+
+        // Then the invariants section appears before the profile, which appears before the stage
+        val prompt = fake.receivedSystemPrompt!!
+        val invariantsAt = prompt.indexOf("# Invariants (MUST NOT be violated)")
+        val profileAt = prompt.indexOf("# User profile")
+        val stageAt = prompt.indexOf("# Current stage")
+        assertTrue(invariantsAt >= 0 && profileAt >= 0 && stageAt >= 0, "a section is missing")
+        assertTrue(invariantsAt < profileAt, "invariants must precede the profile")
+        assertTrue(profileAt < stageAt, "profile must precede the stage")
+    }
+
+    @Test
+    fun `with no invariants nothing invariant-related is injected`() = runBlocking {
+        // Given a store with NO invariants
+        seedLongTerm()
+        val memory = MemoryStore(root)
+        memory.working.createTask("demo")
+
+        val fake = FakeResponseGenerator(GeneratedResponse("ok", taskUpdate = null, inputTokens = 1, outputTokens = 1))
+        val agent = Agent(fake, memory)
+
+        // When the agent runs
+        agent.run("hi", history = emptyList())
+
+        // Then neither the header nor the enforcement instruction appears
+        val prompt = fake.receivedSystemPrompt!!
+        assertFalse(prompt.contains("# Invariants"), "no invariants header expected")
+        assertFalse(prompt.contains("MUST NOT propose the violating solution"), "no instruction expected")
+    }
+
+    @Test
     fun `with no active task, current task is null and no prompt task section`() = runBlocking {
         // Given a store with no tasks
         seedLongTerm()

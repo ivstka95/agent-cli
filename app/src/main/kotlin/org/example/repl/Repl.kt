@@ -169,6 +169,28 @@ class Repl(
                 memory.longTerm.activeProfileName(),
                 "No profiles yet. Create one with :profile-new <name>.",
             )
+            ":invariant-add" -> {
+                if (arg.isEmpty()) {
+                    out("Usage: :invariant-add <text>")
+                } else {
+                    memory.invariants.add(arg)
+                    out("Added invariant.")
+                }
+            }
+            ":invariant-list" -> printInvariants()
+            ":invariant-remove" -> {
+                if (arg.isEmpty()) {
+                    out("Usage: :invariant-remove <text or index>")
+                } else if (memory.invariants.remove(arg)) {
+                    out("Removed invariant.")
+                } else {
+                    out("No matching invariant: '$arg'. Use :invariant-list to see them.")
+                }
+            }
+            ":invariant-clear" -> {
+                memory.invariants.clear()
+                out("Cleared all invariants.")
+            }
             else -> out("Unknown command: $command. Type :help for the list.")
         }
         return false
@@ -260,6 +282,16 @@ class Repl(
         return "  [stage: ${header.stage.stageValue}$step]"
     }
 
+    /** Print the invariants as a numbered list (Day 14), or an empty message. */
+    private fun printInvariants() {
+        val invariants = memory.invariants.list()
+        if (invariants.isEmpty()) {
+            out("No invariants yet. Add one with :invariant-add <text>.")
+        } else {
+            invariants.forEachIndexed { i, text -> out("  ${i + 1}. $text") }
+        }
+    }
+
     /** Print a list of names with a `* ` marker on the active one (or an empty message). */
     private fun printList(items: List<String>, active: String?, emptyMessage: String) {
         if (items.isEmpty()) {
@@ -289,6 +321,10 @@ class Repl(
             |  :profile-show           print the active profile
             |  :profile-set <f> <v>    set a preference field (overwrites)
             |  :profile-list           list profiles (* = active)
+            |  :invariant-add <text>      add a global invariant (hard constraint)
+            |  :invariant-list            list invariants (numbered)
+            |  :invariant-remove <t|n>    remove an invariant by text or index
+            |  :invariant-clear           remove all invariants
             |  :help                show this help
             |  :quit, :q            exit
             |Anything else is sent to the agent as a chat message.
