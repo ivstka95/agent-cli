@@ -7,6 +7,8 @@ swarm is DESIGNED FOR but NOT implemented yet).
 
 Read this file at the start of every session before planning or writing code.
 
+> **Day 16 (Connect to MCP):** a separate, autonomous module — see [`mcp/PLAN.md`](mcp/PLAN.md).
+
 ---
 
 ## Central idea: layered system-prompt assembly
