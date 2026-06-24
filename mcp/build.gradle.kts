@@ -2,7 +2,14 @@ plugins {
     // Apply the org.jetbrains.kotlin.jvm Plugin to add support for Kotlin.
     alias(libs.plugins.kotlin.jvm)
 
-    // Apply the application plugin to add support for running the MCP demo.
+    // kotlinx.serialization compiler plugin (for the GitHub response @Serializable DTOs).
+    alias(libs.plugins.kotlin.serialization)
+
+    // java-library: provides the `api` configuration so :mcp can expose the MCP SDK types
+    // (returned by McpClient) to :app. The application plugin alone only offers `implementation`.
+    `java-library`
+
+    // Apply the application plugin to add support for running the MCP server.
     application
 }
 
@@ -12,10 +19,25 @@ repositories {
 }
 
 dependencies {
-    // Official Kotlin MCP SDK (umbrella artifact: client now, server later for Day 18).
-    implementation(libs.mcp.kotlin.sdk)
+    // Official Kotlin MCP SDK (umbrella artifact: client + server).
+    // `api` (not `implementation`): McpClient's public methods return SDK types (Tool,
+    // CallToolResult), so :app must see them to compile against :mcp (the first coupling).
+    api(libs.mcp.kotlin.sdk)
 
-    // Coroutines: connect()/listTools() are suspend functions (Main runs in runBlocking).
+    // Ktor server (CIO engine + SSE) — hosts our GitHub MCP server over HTTP (Application.mcp).
+    implementation(libs.ktor.server.core)
+    implementation(libs.ktor.server.cio)
+    implementation(libs.ktor.server.sse)
+
+    // Ktor client (CIO + JSON) — the GitHub HTTP client, and the SSE client transport.
+    // The client SSE plugin (install(SSE), sseSession) ships in ktor-client-core in Ktor 3.x.
+    implementation(libs.ktor.client.core)
+    implementation(libs.ktor.client.cio)
+    implementation(libs.ktor.client.content.negotiation)
+    implementation(libs.ktor.serialization.kotlinx.json)
+    implementation(libs.kotlinx.serialization.json)
+
+    // Coroutines: connect()/listTools()/callTool() are suspend functions (Main runs in runBlocking).
     implementation(libs.kotlinx.coroutines.core)
 
     // No-op SLF4J 2.x binding: the SDK (Ktor 3.x) logs via SLF4J 2.x; without a matching
@@ -28,6 +50,9 @@ dependencies {
     // Use the JUnit 5 integration.
     testImplementation(libs.junit.jupiter.engine)
 
+    // Ktor MockEngine — stub the GitHub API in the tool handler test.
+    testImplementation(libs.ktor.client.mock)
+
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
@@ -39,13 +64,22 @@ java {
 }
 
 application {
-    // Define the main class for the MCP demo.
-    mainClass = "org.example.mcp.MainKt"
+    // Primary run target (Day 17): our GitHub MCP server over HTTP.
+    // The Day-16 client demo (org.example.mcp.MainKt) stays runnable via the `runClientDemo` task.
+    mainClass = "org.example.mcp.server.ServerMainKt"
 }
 
 tasks.named<JavaExec>("run") {
-    // The demo launches a stdio subprocess (npx ...) and prints the tool list; let it
-    // inherit the terminal's stdio so the server's stderr surfaces during a manual run.
+    // The HTTP server logs its bind URL and blocks; inherit stdio so logs surface.
+    standardInput = System.`in`
+}
+
+// Day-16 stdio client demo, kept runnable: `./gradlew :mcp:runClientDemo`.
+tasks.register<JavaExec>("runClientDemo") {
+    group = "application"
+    description = "Run the Day-16 stdio MCP client demo (connects to server-everything, lists tools)."
+    mainClass = "org.example.mcp.MainKt"
+    classpath = sourceSets["main"].runtimeClasspath
     standardInput = System.`in`
 }
 

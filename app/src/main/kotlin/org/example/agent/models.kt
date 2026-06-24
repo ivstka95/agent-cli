@@ -1,5 +1,6 @@
 package org.example.agent
 
+import kotlinx.serialization.json.JsonObject
 import org.example.task.TaskState
 
 /** Raw result of a plain text completion (transport layer). */
@@ -8,6 +9,51 @@ data class LlmResult(
     val inputTokens: Int,
     val outputTokens: Int,
 )
+
+// ── Day 17: native tool-use types (conversational agentic loop) ─────────────────
+
+/**
+ * An available tool, in the LLM provider's terms: a name, a description, and a JSON-Schema
+ * [inputSchema]. Built from the MCP server's advertised tools by `McpToolAdapter`.
+ */
+data class ToolSpec(val name: String, val description: String, val inputSchema: JsonObject)
+
+/**
+ * One tool the model asked to call this turn. [argsJson] is the model's tool input as a raw JSON
+ * object string (the loop parses it into arguments for the MCP call; the client re-serializes it
+ * unchanged when echoing the assistant `tool_use` block back).
+ */
+data class ToolUseRequest(val id: String, val name: String, val argsJson: String)
+
+/** The result of executing one [ToolUseRequest], fed back to the model as a `tool_result` block. */
+data class ToolResult(val toolUseId: String, val content: String, val isError: Boolean)
+
+/** One round-trip of the agentic loop: the model's [uses] and the matching tool [results]. */
+data class ToolExchange(val uses: List<ToolUseRequest>, val results: List<ToolResult>)
+
+/**
+ * Outcome of ONE tool-use round-trip ([LlmClient.runToolTurn]): either a final text [Answer] (no
+ * tool requested) or a set of [ToolRequests] the loop must execute and feed back.
+ */
+sealed interface LlmTurn {
+    val inputTokens: Int
+    val outputTokens: Int
+
+    data class Answer(
+        val text: String,
+        override val inputTokens: Int,
+        override val outputTokens: Int,
+    ) : LlmTurn
+
+    data class ToolRequests(
+        val toolUses: List<ToolUseRequest>,
+        override val inputTokens: Int,
+        override val outputTokens: Int,
+    ) : LlmTurn
+}
+
+/** Final result of the agentic loop: the assistant's reply plus summed token usage. */
+data class AgenticResult(val reply: String, val inputTokens: Int, val outputTokens: Int)
 
 /**
  * Raw result of a structured (forced tool-use) completion (transport layer).

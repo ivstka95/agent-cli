@@ -28,4 +28,20 @@ interface LlmClient {
         toolDescription: String,
         inputSchema: JsonObject,
     ): StructuredResult
+
+    /**
+     * One tool-use round-trip (Day 17): sends [tools] with `tool_choice` auto so the model may call
+     * a tool OR answer. [exchanges] are the accumulated tool_use/tool_result pairs from this loop,
+     * re-serialized as native content blocks each call. Returns an [LlmTurn]: a final [LlmTurn.Answer]
+     * or the [LlmTurn.ToolRequests] the caller must execute and feed back.
+     *
+     * Distinct from [completeStructured]'s FORCED tool_choice — the two modes are never mixed.
+     * Has a default so non-agentic [LlmClient] fakes need not implement it.
+     */
+    suspend fun runToolTurn(
+        systemPrompt: String,
+        messages: List<Message>,
+        exchanges: List<ToolExchange>,
+        tools: List<ToolSpec>,
+    ): LlmTurn = throw UnsupportedOperationException("runToolTurn is not supported by this LlmClient")
 }
