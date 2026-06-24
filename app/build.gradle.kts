@@ -69,6 +69,21 @@ tasks.named<JavaExec>("run") {
     standardInput = System.`in`
 }
 
+// [Day 18] Background digest run mode, kept separate from the interactive REPL (the default `run`).
+// Mirrors :mcp's `runClientDemo`: a second entry point under the same module/classpath.
+tasks.register<JavaExec>("runDigest") {
+    group = "application"
+    description = "Run the Day-18 background commit-digest daemon (periodically calls get_recent_commits)."
+    mainClass = "org.example.digest.DigestMainKt"
+    classpath = sourceSets["main"].runtimeClasspath
+    // A manually-registered JavaExec does not inherit the toolchain the way the application
+    // plugin's `run` does — pin it to the project's Java 21 launcher so it matches the bytecode.
+    javaLauncher = javaToolchains.launcherFor(java.toolchain)
+    // Run from the repo root so DigestStore's File("digest/...") resolves to the project-root
+    // digest/ dir (matching the root-anchored /digest/ gitignore rule), like the REPL's memory/.
+    workingDir = rootProject.projectDir
+}
+
 tasks.named<Test>("test") {
     // Use JUnit Platform for unit tests.
     useJUnitPlatform()

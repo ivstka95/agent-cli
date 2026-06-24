@@ -554,5 +554,70 @@ execution" step would reuse this same loop as a pre-step (tools first, then the 
 - **Run order:** `./gradlew :mcp:run` (HTTP server), then `./gradlew :app:run`. If the server is
   unreachable the agent still runs (no tools).
 
-**DESIGNED FOR, NOT IMPLEMENTED (Day 18):** scheduler/periodic execution, persistence, 24/7
-background, physical VPS deploy. The extensible tool registry and HTTP-ready transports are the hooks.
+**IMPLEMENTED IN DAY 18:** scheduler/periodic execution, persistence, 24/7 background — see below.
+Still NOT implemented: physical VPS deploy (the digest daemon is deploy-ready in principle, but
+deployment is out of scope).
+
+---
+
+## Day 18 — Scheduler & background tasks (periodic commit digest) — IMPLEMENTED
+
+A NEW background **digest run mode** for `:app`: an agent that "runs 24/7 and periodically emits a
+summary." On a timer it calls the existing Day-17 `get_recent_commits` tool, computes the delta of
+NEW commits vs. the last-seen set, persists state, and prints an aggregated summary each tick.
+
+**Guiding principle (locked): the agent owns scheduling/aggregation; the MCP server stays a thin
+adapter.** MCP/SDK has no built-in scheduling — it lives in the app layer.
+
+### Scope
+- **IN:** a separate digest/daemon run mode in `:app`; a coroutine scheduler loop; JSON persistence
+  of last-seen SHAs + counters (separate file from `memory/`); delta + stats aggregation; periodic
+  summary output; reuse of `get_recent_commits` via the existing MCP client.
+- **OUT:** no new MCP tool; no SQLite; no VPS deploy; no MCP Tasks/Subscriptions; **interactive mode
+  (Days 11–17) is unchanged** (`Main.kt`/`Repl`/`Agent`/`AgenticLoop`/`MemoryStore` untouched).
+- **ONE approved server edit** (the only exception to "server unchanged"): `get_recent_commits` now
+  leads each output line with the short SHA it already fetched (`Commit.sha` carried through
+  `CommitDto.toCommit()` → `format()`), giving the digest a stable commit identity to diff on. No new
+  tool, endpoint, or logic — the server stays a thin adapter.
+
+### Locked decisions
+1. **Scheduling in the app layer**, not the server. The agent drives the existing tool on a timer.
+2. **Reuse the Day-17 tool** `get_recent_commits(owner, repo, limit?)` unchanged in behavior.
+3. **Separate run mode** — a NEW entry point distinct from the REPL, mirroring how `:mcp` separates
+   server vs. client-demo entry points.
+4. **Scheduler = a Kotlin coroutine loop** `while (isActive) { tick(); delay(interval) }`. Interval
+   configurable (env, default 60s for the demo). Clean shutdown on cancel (`delay` is cancellable).
+5. **Persistence = a JSON file** (kotlinx.serialization) in a separate, gitignored `digest/` dir.
+   Stores last-seen SHAs + session counters. Reloaded each tick → source of truth. No SQLite.
+6. **Aggregated summary = delta + stats**, computed in **deterministic Kotlin** (no LLM per tick →
+   digest mode needs the MCP connection only, no API key): new this tick, total tracked, most active
+   author; "no changes" + current aggregates when nothing is new.
+7. **Commit identity = short SHA** (enabled by the one server edit).
+8. **Reuse Day-17 plumbing** — same `SdkMcpClient` + `HttpClientTransportFactory` + `callTool` +
+   `textOrError`; the MCP client is not rebuilt.
+
+### Architecture (new package `org.example.digest` in `:app`)
+```
+DigestMain (runBlocking)   ← NEW entry point (mainClass org.example.digest.DigestMainKt)
+  └─ SdkMcpClient(HttpClientTransportFactory(url)).connect()      ← reused Day-17 plumbing
+  └─ DigestScheduler.run():  while (isActive) { tick(); delay(interval) }
+        tick():  CommitCollector.collect() ─► McpClient.callTool("get_recent_commits", …)
+                 DigestAggregator.apply(prevState, collected)  ← pure delta + stats
+                 DigestStore.save(newState)                    ─► digest/state.json
+                 emit(summary)
+```
+- `CollectedCommit` — app-side commit model (decoupled from `:mcp`'s `Commit`).
+- `CommitCollector` — the ONE parse point: calls the tool, parses `- {sha7} {msg} — {author} (date)`
+  lines; never throws (errors → empty list, logged).
+- `DigestState` (`@Serializable`) — `seenShas`, `totalTracked`, `authorCounts`, `ticks`.
+- `DigestStore` — JSON load/save; missing/corrupt → empty state.
+- `DigestAggregator` — pure `apply(previous, collected) → TickResult(state, newCommits, summary)`.
+- `DigestScheduler` — `tick()` (testable, off the timing loop) + `run()` (the loop).
+
+**Run order:** `./gradlew :mcp:run` (HTTP server), then `./gradlew :app:runDigest`. Config via env:
+`MCP_SERVER_URL`, `DIGEST_OWNER`, `DIGEST_REPO`, `DIGEST_LIMIT`, `DIGEST_INTERVAL_SECONDS`. The
+interactive REPL is unchanged (`./gradlew :app:run`).
+
+**Tests (hand-written fakes):** `DigestAggregatorTest` (delta + stats), `DigestStoreTest` (JSON
+round-trip), `CommitCollectorTest` (parsing via a fake `McpClient`), `DigestSchedulerTest`
+(consecutive ticks, restart reload, clean cancellation).

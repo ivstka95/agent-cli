@@ -49,12 +49,14 @@ class GetRecentCommitsToolTest {
         val text = result.textOrError()
 
         assertEquals(false, result.isError)
+        // Short SHA leads each line (Day-18 digest keys the delta on it).
+        assertTrue(text.contains("- a1 Fix flaky test"), text)
+        assertTrue(text.contains("- b2 Add feature X"), text)
         // First line of the message only (subject), with author and date.
         assertTrue(text.contains("Fix flaky test"), text)
         assertTrue(!text.contains("body"), "should keep only the commit subject line")
         assertTrue(text.contains("Ada"), text)
         assertTrue(text.contains("2026-06-20T10:00:00Z"), text)
-        assertTrue(text.contains("Add feature X"), text)
     }
 
     @Test

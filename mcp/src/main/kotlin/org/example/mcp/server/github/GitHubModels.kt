@@ -4,9 +4,10 @@ import kotlinx.serialization.Serializable
 
 /**
  * Minimal model of one commit, projected from the GitHub REST response.
- * [message] is the first line of the commit message (the subject).
+ * [sha] is the full commit hash (callers may abbreviate it); [message] is the first line of the
+ * commit message (the subject).
  */
-data class Commit(val message: String, val author: String, val date: String)
+data class Commit(val sha: String, val message: String, val author: String, val date: String)
 
 /** Raised when the GitHub API returns a non-success status (e.g. 404, 403 rate-limit). */
 class GitHubApiException(val statusCode: Int, val body: String) :
@@ -25,6 +26,7 @@ internal data class CommitDto(
     val commit: CommitDetailDto = CommitDetailDto(),
 ) {
     fun toCommit(): Commit = Commit(
+        sha = sha,
         message = commit.message.lineSequence().firstOrNull()?.trim().orEmpty(),
         author = commit.author.name,
         date = commit.author.date,
