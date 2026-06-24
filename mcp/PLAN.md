@@ -185,3 +185,63 @@ expected tool name. It requires Node at test time — skip gracefully (e.g. assu
 
 **Build green.** `./gradlew :mcp:build` compiles and tests pass; `./gradlew build` (whole repo)
 remains green.
+
+---
+
+# Day 17 — First MCP tool: our GitHub MCP server + `callTool` (IMPLEMENTED)
+
+Day 17 turns `:mcp` from a client-only module into **client + server**, and the agent (`:app`) uses
+a tool for the first time. This section covers the `:mcp` side (server + `callTool`); the agent-side
+agentic loop and the `:app → :mcp` coupling are noted in the root [`PLAN.md`](../PLAN.md).
+
+## What was built
+
+**Our GitHub MCP server** (`server/` package) wrapping the **public** GitHub REST API — one tool,
+no token (60 req/hr unauthenticated):
+- `get_recent_commits(owner, repo, limit?)` → recent commits (message subject, author, date) from
+  `GET /repos/{owner}/{repo}/commits?per_page={limit}` (`limit` default 10, clamp 1..30). Handler
+  never throws out — HTTP/404/rate-limit/bad-args become `CallToolResult.error(...)`.
+- Layout: `server/github/` (`GitHubClient` + `@Serializable` DTOs, injectable Ktor engine for tests),
+  `server/tools/` (`McpToolDefinition` + `McpToolRegistry` + `GetRecentCommitsTool`),
+  `server/transport/` (factory + `HttpServerTransportFactory` + `StdioServerTransportFactory`),
+  `server/config/ServerBindConfig`, `server/GitHubMcpServer`, `server/ServerMain`.
+
+**`callTool` — the Day-16 seat, filled.** `McpClient.callTool(name, arguments: Map<String, Any?>):
+CallToolResult` delegates to the SDK `client.callTool(...)`, reusing the SAME connected `Client`.
+Helper `CallToolResult.textOrError()` extracts text without touching content-block polymorphism.
+
+**HTTP transport, both sides** (HTTP primary, stdio fallback):
+- Server: `HttpServerTransportFactory` runs `embeddedServer(CIO){ mcp { GitHubMcpServer.build(github) } }`
+  — the SDK's `Application.mcp` installs SSE + content-negotiation and mounts the SSE GET + POST at
+  the root path. `StdioServerTransportFactory` is the documented fallback (mirrors the client-side
+  factory discipline; not wired into `ServerMain`).
+- Client: `HttpClientTransportFactory` builds a Ktor `HttpClient(CIO){ install(SSE) }` +
+  `SseClientTransport(client, urlString = serverUrl)` — the Day-17 counterpart of `StdioTransportFactory`.
+- `ServerBindConfig` (default `127.0.0.1:3001`, overridable via `MCP_HOST`/`MCP_PORT`): a VPS deploy
+  later is a config change, not a code change.
+
+## Locked decisions / notes
+
+1. **`:mcp` primary run target → `org.example.mcp.server.ServerMainKt`** (`./gradlew :mcp:run` starts
+   the HTTP server). The Day-16 stdio client demo stays runnable: `./gradlew :mcp:runClientDemo`.
+2. **Extensible tool registry (Day-18 hook).** Adding a tool = one `McpToolDefinition` appended to
+   `McpToolRegistry.default(...)`; `registerAll` and `GitHubMcpServer.build` are untouched.
+3. **`:mcp` exposes the SDK with `api` (not `implementation`)** + the `java-library` plugin —
+   `McpClient`'s methods return SDK types (`Tool`, `CallToolResult`), so `:app` must see them.
+4. **⚠️ Ktor 3.4.3 (project-wide).** kotlin-sdk 0.13.0 forces Ktor 3.x transitively; Day 16 dodged it
+   (stdio uses no engine) but Day 17's `:app → :mcp` + SSE made it real, so the whole project was
+   bumped 2.3.13 → 3.4.3 (`:app`'s `AnthropicClient` needed no source change; only `slf4j.nop` →
+   `slf4j2.nop`). Note: `ktor-client-sse` is NOT a separate artifact in 3.x — the client SSE plugin
+   ships in `ktor-client-core`.
+
+## Verification
+
+- `GetRecentCommitsToolTest` — handler with Ktor `MockEngine` (GitHub stubbed): success formats
+  commits; 404 → error result; missing args → error result (no HTTP call).
+- `CallToolHttpTest` — embedded HTTP server in-process (GitHub stubbed) + a real MCP client over SSE:
+  `listTools()` advertises the tool and `callTool(...)` returns the commits.
+- Whole-repo `./gradlew build` green (Days 11–16 not regressed).
+
+## OUT of scope (Day 18, designed-for not built)
+Scheduler/periodic execution, persistence (JSON/SQLite), 24/7 background, physical VPS deploy. The
+registry + HTTP transport leave the hooks; no Day-18 machinery is built.

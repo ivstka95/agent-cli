@@ -1,7 +1,9 @@
 package org.example.mcp
 
 import io.modelcontextprotocol.kotlin.sdk.client.Client
+import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.Implementation
+import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import io.modelcontextprotocol.kotlin.sdk.types.Tool
 import org.example.mcp.transport.McpTransportFactory
 import org.example.mcp.transport.McpTransportHandle
@@ -32,12 +34,24 @@ interface McpClient {
      */
     suspend fun listTools(): List<Tool>
 
-    // Day 17 seat — tool invocation slots in here, reusing the SAME connected Client:
-    //   suspend fun callTool(name: String, arguments: Map<String, Any?>): CallToolResult
-    // Intentionally NOT implemented in Day 16 (scope = list tools only).
+    /**
+     * Invokes a tool on the connected server, reusing the SAME [connect]ed session.
+     * [arguments] keys/values must match the tool's input schema.
+     */
+    suspend fun callTool(name: String, arguments: Map<String, Any?>): CallToolResult
 
     /** Releases the connection and the underlying transport/subprocess. */
     suspend fun close()
+}
+
+/**
+ * Extracts the textual content of a [CallToolResult] (concatenated [TextContent] blocks), so
+ * callers don't touch the SDK's content-block polymorphism. If [CallToolResult.isError] is true,
+ * the text is prefixed with `Error: ` so the marker survives into a plain string.
+ */
+fun CallToolResult.textOrError(): String {
+    val text = content.filterIsInstance<TextContent>().joinToString("\n") { it.text }
+    return if (isError == true) "Error: $text" else text
 }
 
 /**
@@ -65,6 +79,9 @@ class SdkMcpClient(
     }
 
     override suspend fun listTools(): List<Tool> = client.listTools().tools
+
+    override suspend fun callTool(name: String, arguments: Map<String, Any?>): CallToolResult =
+        client.callTool(name = name, arguments = arguments)
 
     override suspend fun close() {
         // Best-effort: close the SDK client (closes the transport), then the handle (which

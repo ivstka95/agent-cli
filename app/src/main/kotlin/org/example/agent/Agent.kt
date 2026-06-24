@@ -18,6 +18,10 @@ import org.example.task.TransitionMode
 class Agent(
     private val responseGenerator: ResponseGenerator,
     private val memory: MemoryStore,
+    // [Day 17] Optional agentic tool-use loop, used ONLY on the conversational (no-active-task)
+    // path. When null (e.g. the MCP server is unavailable, or in tests) the agent falls back to a
+    // plain one-shot reply, exactly as Days 11–16. The structured task path never uses it.
+    private val agenticLoop: AgenticLoop? = null,
 ) {
 
     /**
@@ -52,12 +56,22 @@ class Agent(
             onStep(step)
         }
 
-        // No active task → no stage, no chain. Plain reply (as Day 11).
+        // No active task → no stage, no chain. Conversational reply.
+        // [Day 17] If an agentic loop is wired (tools available), the LLM may call a tool and the
+        // loop feeds the result back; otherwise a plain one-shot reply (Days 11–16). Same single
+        // system-prompt assembly point either way.
         if (memory.working.activeTaskContent() == null) {
-            val plain = responseGenerator.generate(buildSystemPrompt(null), fullMessages, null)
-            inputTokens += plain.inputTokens
-            outputTokens += plain.outputTokens
-            emit(ChainStep(stage = null, reply = plain.reply))
+            val systemPrompt = buildSystemPrompt(null)
+            val (reply, inTok, outTok) = if (agenticLoop != null) {
+                val result = agenticLoop.run(systemPrompt, fullMessages)
+                Triple(result.reply, result.inputTokens, result.outputTokens)
+            } else {
+                val plain = responseGenerator.generate(systemPrompt, fullMessages, null)
+                Triple(plain.reply, plain.inputTokens, plain.outputTokens)
+            }
+            inputTokens += inTok
+            outputTokens += outTok
+            emit(ChainStep(stage = null, reply = reply))
             return AgentResponse(steps, inputTokens, outputTokens, taskUpdated)
         }
 

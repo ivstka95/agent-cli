@@ -15,6 +15,10 @@ repositories {
 }
 
 dependencies {
+    // Day 17: the agent uses the MCP client to call tools. First coupling — one-directional
+    // (:app -> :mcp). :mcp must NOT depend on :app.
+    implementation(project(":mcp"))
+
     // Ktor client (CIO engine) + JSON content negotiation.
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.cio)
@@ -27,15 +31,18 @@ dependencies {
     // Coroutines (REPL runs in runBlocking).
     implementation(libs.kotlinx.coroutines.core)
 
-    // No-op SLF4J binding: Ktor's CIO engine logs via SLF4J; without a binding it
-    // prints "Failed to load class StaticLoggerBinder" warnings on startup.
-    runtimeOnly(libs.slf4j.nop)
+    // No-op SLF4J 2.x binding: Ktor 3.x's CIO engine logs via SLF4J 2.x; without a matching
+    // provider it prints "No SLF4J providers were found" warnings on startup.
+    runtimeOnly(libs.slf4j2.nop)
 
     // Use the Kotlin JUnit 5 integration.
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
 
     // Use the JUnit 5 integration.
     testImplementation(libs.junit.jupiter.engine)
+
+    // Ktor MockEngine — stub the Anthropic API in the tool-use mapping test.
+    testImplementation(libs.ktor.client.mock)
 
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
