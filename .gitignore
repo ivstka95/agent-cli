@@ -13,3 +13,7 @@ build
 # Agent memory store at the repo root (runtime state; never committed).
 # Root-anchored so it does NOT match the source package app/.../org/example/memory/.
 /memory/
+
+# Day-18 background-digest state (last-seen SHAs + counters; runtime state, never committed).
+# Separate from memory/ — different data. Root-anchored, like /memory/.
+/digest/

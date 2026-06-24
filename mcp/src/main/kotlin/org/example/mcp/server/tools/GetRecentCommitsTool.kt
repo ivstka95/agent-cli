@@ -76,7 +76,9 @@ class GetRecentCommitsTool(private val github: GitHubClient) {
     private fun format(owner: String, repo: String, commits: List<Commit>): String = buildString {
         appendLine("Recent commits for $owner/$repo (${commits.size}):")
         commits.forEach { c ->
-            appendLine("- ${c.message} — ${c.author} (${c.date})")
+            // Short SHA leads the line so a programmatic consumer (the Day-18 digest) has a stable
+            // commit identity to diff on; humans/the model still read the message/author/date after it.
+            appendLine("- ${c.sha.take(7)} ${c.message} — ${c.author} (${c.date})")
         }
     }.trimEnd()
 
