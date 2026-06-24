@@ -523,3 +523,36 @@ NOT NOW (this is the swarm, deferred):
 Design for the maximum (5 days + swarm), implement the minimum that genuinely satisfies the
 tasks. The hooks (`ResponseGenerator`, `StageController`, `allowedTransitions`) allow
 deepening without rewrites. Build incrementally, with a build gate between steps.
+
+---
+
+## Days 16–17 — MCP integration (IMPLEMENTED)
+
+Days 16–17 connect the agent to the Model Context Protocol. Full design lives in
+[`mcp/PLAN.md`](mcp/PLAN.md); this is the agent-side summary.
+
+- **Day 16:** new, decoupled `:mcp` module — an `McpClient` connects to an MCP server over stdio
+  (behind a transport factory) and lists tools.
+- **Day 17:** `:mcp` gains **our own GitHub MCP server** (one tool, `get_recent_commits`, over
+  HTTP/SSE) and fills the `callTool` seat. `:app` gains a **Claude-Code-style agentic tool-use loop**
+  (`agent/AgenticLoop`) — the NEW layer ABOVE the single round-trip: the LLM decides (real native
+  tool-use, `tool_choice` auto) whether to call a tool; the loop runs it via `McpClient.callTool`,
+  feeds the `tool_result` back, and repeats until a final text answer (max-iter guard).
+
+**Where it plugs into the single assembly point:** the loop runs ONLY on the **conversational
+(no-active-task) path** — `Agent` takes an optional `agenticLoop` collaborator and uses it there
+instead of the one-shot reply; when it's null (MCP server down, or tests) the agent falls back to the
+exact Days 11–15 behavior. The **structured task path (`{reply, task_update}` forced-tool-choice)
+stays UNCHANGED** — the two `tool_choice` modes are never mixed. A future "tools during task
+execution" step would reuse this same loop as a pre-step (tools first, then the structured call).
+
+- **First coupling:** `:app → :mcp` (one-directional; `:mcp` never depends on `:app`). Anthropic
+  tool-use concepts live in `:app`; GitHub/MCP concepts in `:mcp`; `agent/McpToolAdapter` is the only
+  MCP `Tool` → Anthropic `ToolSpec` translation point. Tools are discovered live via `listTools()`.
+- **New round-trip primitive:** `LlmClient.runToolTurn(...)` (native tool-use, content blocks
+  confined to `AnthropicClient`); `CombinedResponseGenerator` is untouched.
+- **Run order:** `./gradlew :mcp:run` (HTTP server), then `./gradlew :app:run`. If the server is
+  unreachable the agent still runs (no tools).
+
+**DESIGNED FOR, NOT IMPLEMENTED (Day 18):** scheduler/periodic execution, persistence, 24/7
+background, physical VPS deploy. The extensible tool registry and HTTP-ready transports are the hooks.
