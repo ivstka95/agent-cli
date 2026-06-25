@@ -621,3 +621,23 @@ interactive REPL is unchanged (`./gradlew :app:run`).
 **Tests (hand-written fakes):** `DigestAggregatorTest` (delta + stats), `DigestStoreTest` (JSON
 round-trip), `CommitCollectorTest` (parsing via a fake `McpClient`), `DigestSchedulerTest`
 (consecutive ticks, restart reload, clean cancellation).
+
+---
+
+## Day 19 — MCP tool composition (a 3-tool pipeline) — PLANNED
+
+Day 19 proves the LLM **composes a chain of MCP tools**: from one natural-language request it calls
+*get → process → save* in sequence, passing data between them, with **no hardcoded sequence in the
+agent**. All three tools live on **our one MCP server**; the server stays a **thin adapter with NO
+LLM** (the "process" step is a deterministic report/итог, not LLM summarization).
+
+**Agent side = no code changes.** The Day-17 `AgenticLoop` already advertises every server tool and
+chains tool calls, feeding each result back as a `tool_result` block so the LLM forms the next tool's
+arguments from the previous tool's output. A 3-tool chain + final answer = 4 turns ≤
+`DEFAULT_MAX_ITERATIONS = 5`, so the loop is unchanged. Data flows **tool → LLM context → next tool**
+— the LLM threads it; nothing is wired in code.
+
+**Server side = two NEW deterministic tools via the Day-17 registry** — `build_commit_report(commits)`
+(groups/counts/themes the commit text) and `save_to_file(filename, content)` (sanitized, protected
+write). `get_recent_commits` is reused unchanged. **Full design, locked decisions, and verification
+live in [`mcp/PLAN.md`](mcp/PLAN.md) (Day 19 section)** — the new work is all server-side.

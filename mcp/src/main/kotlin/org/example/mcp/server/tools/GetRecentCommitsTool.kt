@@ -11,7 +11,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
-import org.example.mcp.server.Ansi
+import org.example.mcp.server.McpServerLog
 import org.example.mcp.textOrError
 import org.example.mcp.server.github.Commit
 import org.example.mcp.server.github.GitHubApiException
@@ -69,9 +69,8 @@ class GetRecentCommitsTool(private val github: GitHubClient) {
     /** [Day 17] Logs the FULL result text (or error) in cyan to the :mcp:run terminal. */
     private fun logResult(result: CallToolResult) = log("result:\n${result.textOrError()}")
 
-    /** [Day 17] One cyan, bold-prefixed `[MCP SERVER]` line to stdout. */
-    private fun log(body: String) =
-        println(Ansi.bold(Ansi.cyan("[MCP SERVER]")) + " " + Ansi.cyan(body))
+    /** [Day 17/19] One cyan, bold-prefixed `[MCP SERVER]` line via the shared logger. */
+    private fun log(body: String) = McpServerLog.line(body)
 
     private fun format(owner: String, repo: String, commits: List<Commit>): String = buildString {
         appendLine("Recent commits for $owner/$repo (${commits.size}):")
