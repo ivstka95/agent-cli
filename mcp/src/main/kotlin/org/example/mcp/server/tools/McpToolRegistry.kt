@@ -2,11 +2,12 @@ package org.example.mcp.server.tools
 
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import org.example.mcp.server.github.GitHubClient
+import java.nio.file.Path
 
 /**
  * Extensibility hook (Day 18): holds the server's tool definitions and registers them all in one
- * pass. Day 17 ships exactly one tool; adding more = append to [default]'s list — `registerAll`
- * and the server wiring stay untouched.
+ * pass. Day 17 shipped one tool; Day 19 adds two more — adding a tool = append to [default]'s list,
+ * `registerAll` and the server wiring stay untouched.
  */
 class McpToolRegistry(private val definitions: List<McpToolDefinition>) {
 
@@ -23,11 +24,16 @@ class McpToolRegistry(private val definitions: List<McpToolDefinition>) {
     }
 
     companion object {
-        /** The default tool set. Day 18 adds new tools here. */
-        fun default(github: GitHubClient): McpToolRegistry =
+        /**
+         * The default tool set: the Day-17 GitHub tool plus the Day-19 pipeline pair
+         * (`build_commit_report` is pure; `save_to_file` writes under [outputDir]).
+         */
+        fun default(github: GitHubClient, outputDir: Path): McpToolRegistry =
             McpToolRegistry(
                 listOf(
                     GetRecentCommitsTool(github).definition(),
+                    BuildCommitReportTool().definition(),
+                    SaveToFileTool(outputDir).definition(),
                 ),
             )
     }

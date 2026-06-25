@@ -17,3 +17,7 @@ build
 # Day-18 background-digest state (last-seen SHAs + counters; runtime state, never committed).
 # Separate from memory/ — different data. Root-anchored, like /memory/.
 /digest/
+
+# Day-19 MCP server file-output dir (save_to_file writes here; runtime artifacts, never committed).
+# Root-anchored: this is where `./gradlew :mcp:run` (working dir = mcp/) resolves the default "out".
+/mcp/out/

@@ -13,6 +13,7 @@ import org.example.mcp.transport.HttpClientTransportFactory
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -42,7 +43,8 @@ class CallToolHttpTest {
             },
         )
 
-        val serverHandle = HttpServerTransportFactory(bind, github).start()
+        val outputDir = Files.createTempDirectory("mcp-out")
+        val serverHandle = HttpServerTransportFactory(bind, github, outputDir).start()
         try {
             waitForPort(bind.host, port)
 

@@ -245,3 +245,209 @@ Helper `CallToolResult.textOrError()` extracts text without touching content-blo
 ## OUT of scope (Day 18, designed-for not built)
 Scheduler/periodic execution, persistence (JSON/SQLite), 24/7 background, physical VPS deploy. The
 registry + HTTP transport leave the hooks; no Day-18 machinery is built.
+
+---
+
+# Day 19 — MCP tool composition: a 3-tool pipeline on our server (PLANNED)
+
+> **Status:** plan written, **NOT yet implemented**. Read this section before writing any Day-19 code
+> in `mcp/`. The agent-side note is in the root [`PLAN.md`](../PLAN.md) (Day 19) — but **expect no
+> agent code changes**; all new code is here on the server.
+
+## Goal
+
+Prove the LLM **composes a chain of MCP tools**: from a single natural-language request it calls
+*get data → process → save* in sequence, **passing data between the tools**, with **no hardcoded
+sequence** in the agent. This largely **reuses the Day-17 infrastructure** (extensible registry +
+`AgenticLoop`); the only new code is **two deterministic tools** on our server.
+
+Three constraints (clarified with the course author) shape every decision:
+1. All three tools live **on our one MCP server** — not local agent tools, not three servers.
+2. The server stays a **thin adapter — NO LLM on the server**. "Process/summarize" is **deterministic**
+   (a report/итог, not LLM summarization). No API key, no `AnthropicClient` server-side.
+3. The **LLM decides and orders** the chain via the existing agentic loop.
+
+---
+
+## Scope guard
+
+**IN scope (Day 19):**
+- Two NEW deterministic MCP tools, registered via the existing `McpToolRegistry`:
+  - `build_commit_report(commits)` — groups / counts / themes the commit text into a report. No LLM.
+  - `save_to_file(filename, content)` — writes `content` to a protected, sanitized path on the server
+    side; returns the saved path. No path traversal.
+- Reuse `get_recent_commits(owner, repo, limit?)` **unchanged** as the "get" stage.
+- A small **shared `[MCP SERVER]` logging helper** so the new tools log like the Day-17 tool.
+- A **gitignored** server output directory.
+- Unit tests for both new tools; a manual E2E for the full LLM-driven chain.
+
+**OUT of scope (do NOT build):**
+- Any LLM / `AnthropicClient` / API key on the server. The report is pure string processing.
+- Any new MCP server, transport, or registry architecture — the Day-17 registry already does
+  multi-tool; we append definitions.
+- Any **hardcoded tool sequence** in the agent (the LLM must choose the order).
+- Changes to interactive/digest modes beyond what the new tools require (ideally zero).
+- Changing `get_recent_commits`'s contract or output format (the report parses today's format).
+- Anything from future days (parallel tool calls, conditional routing, …).
+
+**Design principle:** new work is proportional to the goal — two pure functions over data + file IO.
+The registry and loop are already general; we plug in, we don't re-architect.
+
+---
+
+## Architecture — what plugs in where
+
+```
+USER (conversational mode):
+  "Get the latest commits for JetBrains/kotlin, build a report, and save it to kotlin-report.md"
+        │
+        ▼
+AGENT  AgenticLoop.run()  ── UNCHANGED ──  repeat(maxIterations = 5):
+        │   turn 1: LLM → tool_use get_recent_commits(owner, repo, limit?)
+        │   turn 2: LLM (sees commit text) → tool_use build_commit_report(commits=<that text>)
+        │   turn 3: LLM (sees report text) → tool_use save_to_file(filename, content=<the report>)
+        │   turn 4: LLM → final answer ("saved to …")
+        ▼ each tool_use executed via mcpClient.callTool(...); result fed back as a tool_result block
+SERVER  GitHubMcpServer → McpToolRegistry.default(github, outputDir).registerAll(server)
+        ├── get_recent_commits  (reused, unchanged)     server/tools/GetRecentCommitsTool.kt
+        ├── build_commit_report (NEW, pure)             server/tools/BuildCommitReportTool.kt
+        └── save_to_file        (NEW, file IO+sanitize) server/tools/SaveToFileTool.kt
+```
+
+**Data passing is THE verification point.** Data flows tool → LLM context → next tool's arguments.
+`AnthropicClient.runToolTurn` replays each tool result as a `user` `tool_result` block, so the LLM
+forms `build_commit_report`'s `commits` arg from stage-1 output and `save_to_file`'s `content` arg
+from stage-2 output. **Nothing is wired in code — the LLM threads it.**
+
+---
+
+## Locked decisions
+
+### 1. `build_commit_report` receives the commit TEXT as an argument (data through the LLM)
+Two options were on the table:
+- **(A, CHOSEN)** `build_commit_report(commits: string)` — the LLM passes the **full text output of
+  `get_recent_commits`** as the `commits` argument; the tool parses our own fixed line format and
+  emits a report.
+- (B, rejected) the tool re-fetches from GitHub given `owner/repo/limit`.
+
+**Why A:** Day 19's entire point is *"correct data passing between tools."* Option B passes **no data
+between tools** (each tool independently hits GitHub), so the chain proves nothing and duplicates the
+fetch. Option A makes stage-1 output literally become stage-2 input through the LLM — exactly what we
+must demonstrate.
+
+**Data-passing implication / coupling:** the report parses the **same line format**
+`GetRecentCommitsTool.format()` emits — a header line then `- <sha7> <message> — <author> (<date>)`.
+Both tools are ours, so the coupling is intentional. The parser must be **lenient**: skip the header
+and any unparseable line (e.g. `No commits found …`), **never throw**, and if it parses **zero**
+commits return `CallToolResult.error("no parseable commits in input")` so the model can react. We do
+**NOT** change `get_recent_commits` to emit JSON — it's locked unchanged; parsing our own
+deterministic text is fine.
+
+**Report content (deterministic, no LLM):**
+- Total commit count.
+- **Commits grouped by author** with per-author counts, sorted descending.
+- **Most active author** (top group; deterministic tie-break: highest count, then author name asc).
+- **Common themes** by keyword: count conventional-commit type prefixes in messages (`feat`, `fix`,
+  `docs`, `chore`, `refactor`, `test`, `ci`, `build`, `perf`, `style`) and the top-N most frequent
+  non-trivial words (lowercased, short/stop-words removed). Pure counting.
+- Returned as a **formatted text report** via `CallToolResult.success(report)`.
+
+Input schema: `{ commits: string (required) }`.
+
+### 2. `save_to_file(filename, content)` — protected, sanitized, server-side write
+- Input schema: `{ filename: string (required), content: string (required) }`.
+- **Fixed base directory**, resolved once at server start: default `mcp/out/` (under the `:mcp`
+  module), overridable via env `MCP_OUTPUT_DIR` (mirrors the `ServerBindConfig` env-override style).
+  **Injected** into the tool (constructor arg), never hardwired in the handler.
+- **Filename sanitization (no path traversal):** strip any directory component (normalize/reject `/`,
+  `\`, `..`), allow a safe charset only (e.g. `[A-Za-z0-9._-]`), collapse the rest, enforce a max
+  length, default a name if empty. Resolve against the base dir and **verify the canonical resolved
+  path is still inside the base dir**; if not → `CallToolResult.error(...)`. Never write outside base.
+- Create the base dir if missing; write `content` UTF-8 (overwrite). Return
+  `CallToolResult.success("Saved <bytes> bytes to <relative path>")` — the path/confirmation, not the
+  content.
+- **Gitignore** the output dir (add `mcp/out/` to `.gitignore`).
+
+### 3. Registry stays the only wiring point (Day-17 hook)
+Add `BuildCommitReportTool` + `SaveToFileTool` and append their `.definition()`s in
+`McpToolRegistry.default(...)`. `build_commit_report` needs no dependency (pure); `save_to_file` needs
+the output base dir, so `default(...)` gains an `outputDir` parameter (resolved in
+`GitHubMcpServer.build` / `ServerMain` from `MCP_OUTPUT_DIR`). `registerAll` and the SSE/transport
+wiring are **untouched**.
+
+### 4. No agentic-loop changes
+The loop already chains and feeds results back. A 3-tool chain + final answer = **4 turns ≤
+`DEFAULT_MAX_ITERATIONS = 5`** → **no change required**. *Contingency only:* if the model wastes a
+turn and trips the guard during E2E, the single change considered is bumping that constant — do not
+pre-emptively change it.
+
+### 5. The full report must reach the file intact (the key E2E risk)
+`save_to_file`'s `content` must carry the **entire** `build_commit_report` output verbatim — the LLM
+must not paraphrase or truncate. **Mitigation:** `save_to_file`'s description explicitly instructs the
+model to pass the **exact, full content** to save (no summarizing). **Verify in E2E** by diffing the
+file against the `build_commit_report` result shown in the `[MCP SERVER]` log.
+
+### 6. Server stays thin / LLM-free
+No `Anthropic` / API key under `server/` (confirmed). Both new tools are pure functions over data +
+file IO. **No new dependency** is added to `:mcp` — kotlinx.serialization + std lib + the SDK cover
+everything; file IO uses `java.nio` / `java.io`.
+
+### 7. Shared `[MCP SERVER]` logging
+Today the cyan `[MCP SERVER]` helper is **private inside `GetRecentCommitsTool`**. Extract a tiny
+shared helper (e.g. `server/McpServerLog.kt` over the existing `Ansi`) and route all three tools'
+tool-call + result logs through it, so the new tools appear in the colored log exactly like the
+Day-17 tool. Minimal refactor; no change to the existing tool's output.
+
+---
+
+## Files
+
+**New (server):**
+- `server/tools/BuildCommitReportTool.kt`
+- `server/tools/SaveToFileTool.kt`
+- `server/McpServerLog.kt` (shared cyan logger; recommended)
+
+**Modified (server):**
+- `server/tools/McpToolRegistry.kt` — register two tools; add `outputDir` param to `default(...)`.
+- `server/GitHubMcpServer.kt` + `server/ServerMain.kt` — resolve output dir (default `mcp/out/`,
+  `MCP_OUTPUT_DIR` override), thread it into the registry, print the two new tools in the banner.
+- `server/tools/GetRecentCommitsTool.kt` — switch its private `log`/`logResult` to the shared helper
+  (no output change).
+- `.gitignore` — add `mcp/out/`.
+
+**New (tests):**
+- `src/test/kotlin/org/example/mcp/server/BuildCommitReportToolTest.kt`
+- `src/test/kotlin/org/example/mcp/server/SaveToFileToolTest.kt`
+
+**Agent side:** expected **no code changes** — the existing loop already advertises every server tool
+and chains them. Confirmed in E2E only.
+
+---
+
+## Verification
+
+**Unit tests (JUnit 5, hand-written inputs — no network, no LLM):**
+- `BuildCommitReportToolTest`:
+  - Given a known multi-author commit block (in `get_recent_commits` format), the report is
+    **deterministic**: exact total, per-author counts, correct most-active author (incl. a tie-break
+    case), and theme counts for known prefixes/keywords.
+  - Header line and an unparseable / `No commits found` line are skipped gracefully.
+  - Zero parseable commits → `CallToolResult.error(...)` (not a crash).
+- `SaveToFileToolTest`:
+  - Writes the file under the base dir and returns the saved path; file content == input `content`.
+  - **Sanitizes** a messy filename (spaces/odd chars) to a safe name.
+  - **Rejects path traversal**: `../escape.md`, `/etc/passwd`, `a/b/c.md` all stay inside (or error);
+    assert nothing is ever written outside the base dir.
+
+**E2E (manual, the headline check):**
+1. Start the server: `./gradlew :mcp:run` (HTTP/SSE on `127.0.0.1:3001`).
+2. Run the agent conversational mode with `ANTHROPIC_API_KEY` set; ask one request requiring the
+   chain, e.g. *"Get the latest commits for JetBrains/kotlin, build a report, and save it to
+   kotlin-report.md."*
+3. Confirm the **colored logs** show, in order, three `[MCP SERVER]` tool calls —
+   `get_recent_commits`, then `build_commit_report`, then `save_to_file` — each with its result (and
+   the matching `[AGENT]` lines). This proves the **LLM** composed the chain (not us).
+4. Confirm a file appears in `mcp/out/` and its **content matches the `build_commit_report` output**
+   from the log (full report passed intact through the LLM — decision #5).
+5. **No regression:** `./gradlew build` green (Days 11–18 unaffected); interactive + digest modes
+   still work.

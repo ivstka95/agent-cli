@@ -7,14 +7,17 @@ import kotlinx.io.asSource
 import kotlinx.io.buffered
 import org.example.mcp.server.GitHubMcpServer
 import org.example.mcp.server.github.GitHubClient
+import java.nio.file.Path
 
 /**
  * Fallback transport: serves the MCP server over this process's stdio (for launchers that spawn the
  * server as a subprocess). HTTP is primary in Day 17; this exists so the transport choice is a
- * one-place change, mirroring the client-side factory discipline.
+ * one-place change, mirroring the client-side factory discipline. [outputDir] is the protected base
+ * dir for the Day-19 `save_to_file` tool.
  */
 class StdioServerTransportFactory(
     private val github: GitHubClient,
+    private val outputDir: Path,
 ) : McpServerTransportFactory {
 
     override fun start(): McpServerHandle {
@@ -22,7 +25,7 @@ class StdioServerTransportFactory(
             input = System.`in`.asSource().buffered(),
             output = System.out.asSink().buffered(),
         )
-        val session = runBlocking { GitHubMcpServer.build(github).createSession(transport) }
+        val session = runBlocking { GitHubMcpServer.build(github, outputDir).createSession(transport) }
         return StdioServerHandle("stdio") {
             runCatching { runBlocking { session.close() } }
             runCatching { github.close() }
