@@ -10,6 +10,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.longOrNull
 import org.example.mcp.McpClient
+import org.example.mcp.ToolRouter
 import org.example.mcp.textOrError
 
 /**
@@ -19,11 +20,15 @@ import org.example.mcp.textOrError
  * model returns a final text answer (or the [maxIterations] guard trips).
  *
  * The model DECIDES whether to call a tool (real native tool-use), given [tools]'s schemas.
+ *
+ * [Day 20] [mcpClient] may be a multi-server [org.example.mcp.McpClientRegistry]; when an optional
+ * [router] is supplied, each tool-call log names the server the call is routed to.
  */
 class AgenticLoop(
     private val llmClient: LlmClient,
     private val mcpClient: McpClient,
     private val tools: List<ToolSpec>,
+    private val router: ToolRouter? = null,
     private val maxIterations: Int = DEFAULT_MAX_ITERATIONS,
 ) {
 
@@ -58,7 +63,9 @@ class AgenticLoop(
     /** Execute one tool call via MCP, mapping any failure to an error [ToolResult] (never throws). */
     private suspend fun execute(use: ToolUseRequest): ToolResult {
         // [Day 17] Color-highlighted transparency log (visible in the :app:run terminal). Full args.
-        log("LLM requested tool: ${use.name}(${use.argsJson})")
+        // [Day 20] Name the server the call routes to, so cross-server routing is visible.
+        val target = router?.serverFor(use.name)?.let { " → $it" } ?: ""
+        log("LLM requested tool$target: ${use.name}(${use.argsJson})")
 
         val outcome = runCatching {
             mcpClient.callTool(use.name, parseArgs(use.argsJson)).textOrError()
@@ -77,11 +84,12 @@ class AgenticLoop(
     }
 
     /** [Day 17] One green, bold-prefixed `[AGENT]` line to stdout. */
-    private fun log(body: String) =
-        println(Ansi.bold(Ansi.green("[AGENT]")) + " " + Ansi.green(body))
+    private fun log(body: String) = println(Ansi.agentLine(body))
 
     companion object {
-        const val DEFAULT_MAX_ITERATIONS = 5
+        // [Day 20] Raised 5 → 8: the cross-server flow is 4 tool calls + a final answer (5 turns),
+        // exactly the old limit; headroom absorbs any exploratory call (e.g. list_allowed_directories).
+        const val DEFAULT_MAX_ITERATIONS = 8
 
         private val JSON = Json { ignoreUnknownKeys = true }
 

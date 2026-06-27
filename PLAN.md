@@ -641,3 +641,24 @@ arguments from the previous tool's output. A 3-tool chain + final answer = 4 tur
 (groups/counts/themes the commit text) and `save_to_file(filename, content)` (sanitized, protected
 write). `get_recent_commits` is reused unchanged. **Full design, locked decisions, and verification
 live in [`mcp/PLAN.md`](mcp/PLAN.md) (Day 19 section)** — the new work is all server-side.
+
+---
+
+## Day 20 — MCP orchestration (route across TWO MCP servers) — PLANNED
+
+Day 20 generalizes the agent from **one** MCP server to **two at once**: our GitHub server (HTTP/SSE,
+unchanged) **plus** the third-party filesystem server (`@modelcontextprotocol/server-filesystem`,
+launched via `npx` over stdio). The agent connects to both at startup, **merges** their tools into one
+list for the LLM, and **routes** each `tool_use` to the server that owns it. The headline proof is a
+single request whose flow crosses both servers: `get_recent_commits` → `build_commit_report` (**our**
+server) → `write_file` → `read_file` (**filesystem** server) → final answer.
+
+**The one new abstraction is `McpClientRegistry`** — a composite that *is-an* `McpClient` (so the
+Day-17 `AgenticLoop` drives it unchanged) holding named clients, merging `listTools`, and routing
+`callTool` via a tool→owner map built during listing (collision → first-registered wins + warn). It
+also implements `ToolRouter.serverFor(tool)` so the `[AGENT → <server>]` log makes routing visible
+(needed because the third-party server has no `[MCP SERVER]` log of its own). Both transport factories
+(Day-16 stdio, Day-17 HTTP) are reused as-is; the loop only gains the routed-server log and a raised
+`DEFAULT_MAX_ITERATIONS` (5 → 8) for the longer flow. Connection degrades **per server**. Digest mode
+is untouched. **Full design, locked decisions, and verification live in
+[`mcp/PLAN.md`](mcp/PLAN.md) (Day 20 section).**

@@ -15,4 +15,7 @@ internal object Ansi {
 
     fun green(s: String): String = GREEN + s + RESET
     fun bold(s: String): String = BOLD + s + RESET
+
+    /** The canonical agent-side log line: a bold-green `[AGENT]` tag followed by green [body]. */
+    fun agentLine(body: String): String = bold(green("[AGENT]")) + " " + green(body)
 }

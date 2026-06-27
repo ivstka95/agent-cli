@@ -451,3 +451,186 @@ and chains them. Confirmed in E2E only.
    from the log (full report passed intact through the LLM — decision #5).
 5. **No regression:** `./gradlew build` green (Days 11–18 unaffected); interactive + digest modes
    still work.
+
+---
+
+# Day 20 — MCP orchestration: route across TWO MCP servers (IMPLEMENTED)
+
+> **Status:** implemented. The one new abstraction is the multi-server **`McpClientRegistry`** in
+> `:mcp`; the agent-side wiring (`Main.kt`) + loop log live in `:app`. Read this before changing the
+> orchestration layer. The root [`PLAN.md`](../PLAN.md) (Day 20) carries the summary.
+
+## Goal
+
+Generalize the agent from **one** MCP server to **two at once**: our GitHub server (HTTP/SSE,
+unchanged) **plus** the third-party filesystem server (`@modelcontextprotocol/server-filesystem`, via
+`npx` over stdio). The agent connects to both at startup, **merges** their tools into one list for the
+LLM, and **routes** each `tool_use` to the server that owns it. Headline proof — a single request whose
+long flow crosses both servers:
+
+> "Get the latest commits for JetBrains/kotlin, build a report, save it to a file, then read it back and show me."
+> → `get_recent_commits` → `build_commit_report` (**OUR** server) → `write_file` → `read_file` (**FILESYSTEM** server) → answer.
+
+The write goes through the **filesystem** server (not our Day-19 `save_to_file`), so the flow visibly
+crosses both servers.
+
+---
+
+## Scope guard
+
+**IN scope (Day 20):**
+- A multi-client orchestration layer that connects to 2 servers, merges tools, and routes each
+  `callTool` to the owning server.
+- A third-party filesystem server integrated over stdio via `npx`, sandboxed to a dedicated dir.
+- Agent-side routing visible in logs (`[AGENT → <server>]`).
+- Raising `DEFAULT_MAX_ITERATIONS` to fit the longer flow.
+- Unit test for the routing/merge layer; manual E2E for the cross-server flow.
+
+**OUT of scope (do NOT build):**
+- No 3rd/4th server (2 is the confirmed minimum for "multiple").
+- **No changes to our GitHub server's tools** (Day-19 tools unchanged; `save_to_file` stays but is
+  bypassed in the demo in favor of the filesystem server's `write_file`).
+- No changes to digest mode.
+- No tool-name namespacing scheme (a simple owner map suffices — names are distinct).
+- No model-specific features — pure MCP orchestration.
+- Nothing from future days (parallel calls, conditional routing, dynamic discovery).
+
+**Design principle:** the only new work is the multi-client/routing layer. The agentic loop, the tool
+adapter, both transport factories, and our GitHub server are **reused**, not re-architected.
+
+---
+
+## Architecture — what plugs in where
+
+```
+USER (interactive REPL):
+  "Get the latest commits for JetBrains/kotlin, build a report, save it to a file,
+   then read it back and show me."
+        │
+        ▼
+AGENT  AgenticLoop.run()  ──  repeat(maxIterations):  each tool_use → registry.callTool(name, args)
+        │   turn 1: get_recent_commits   ─┐  routed → GITHUB  (HTTP :3001)
+        │   turn 2: build_commit_report  ─┘
+        │   turn 3: write_file           ─┐  routed → FILESYSTEM (stdio npx)
+        │   turn 4: read_file            ─┘
+        │   turn 5: final answer
+        ▼
+ORCHESTRATION  McpClientRegistry : McpClient, ToolRouter      ← NEW (only new abstraction)
+        ├── "github"     → SdkMcpClient(HttpClientTransportFactory("http://127.0.0.1:3001"))
+        └── "filesystem" → SdkMcpClient(StdioTransportFactory(ServerConfig.serverFilesystem(dir)))
+                routing map: toolName → owning client, built during listTools()
+```
+
+The registry **is-an** `McpClient`, so `AgenticLoop` keeps its `mcpClient: McpClient` field and calls
+`callTool` exactly as before — routing happens **inside** the registry. The loop additionally takes the
+registry as an optional `ToolRouter` to name the routed server in its log.
+
+---
+
+## Locked decisions
+
+### 1. `McpClientRegistry` — a composite `McpClient` + `ToolRouter`
+`mcp/.../McpClientRegistry.kt`. Constructor: an **ordered** `Map<String, McpClient>` (server name →
+client) + an injected `log: (String) -> Unit` (so `:app` formats warnings as green `[AGENT]` lines).
+- `connect()` — connects each client in its own try/catch; only successfully-connected servers are kept
+  (per-server graceful degrade, decision #5).
+- `listTools()` — lists tools from each **connected** client, builds the `toolName → client` /
+  `toolName → serverName` maps, returns the **merged** `List<Tool>`.
+- `callTool(name, args)` — routes to the owning client; unknown tool → `IllegalArgumentException`
+  (the loop's `runCatching` turns it into an error `ToolResult`, never a crash).
+- `serverFor(name)` (`ToolRouter`) — owning server name, or `null`.
+- `close()` — best-effort closes every client; one failure can't leak the others.
+
+### 2. Routing by an unambiguous owner map; collision = first-registered wins + warn
+The map is built once during `listTools()`, iterating clients in **registration order**. GitHub and
+filesystem tool names are distinct, so no collision occurs in practice. If one ever does: **keep the
+first-registered owner and emit a clear warning** naming the tool and both servers (non-fatal). Full
+namespacing (Claude-Code `server__tool`) is out of scope; an owner map is enough for two servers.
+
+### 3. Both transports run simultaneously — reuse Day-16 stdio + Day-17 HTTP factories unchanged
+GitHub → `SdkMcpClient(HttpClientTransportFactory(MCP_SERVER_URL ?: "http://127.0.0.1:3001"))`;
+filesystem → `SdkMcpClient(StdioTransportFactory(ServerConfig.serverFilesystem(dir)))`. The registry
+holds both client+transport types at once. **No transport-factory code changes.**
+
+### 4. Filesystem server config + sandbox dir
+New `ServerConfig.serverFilesystem(allowedDir)` = `["npx","-y","@modelcontextprotocol/server-filesystem", allowedDir]`,
+mirroring `serverEverything()`. The sandbox dir is a gitignored `agent-fs/` at the repo root (default,
+overridable via env `MCP_FS_DIR`); `Main.kt` creates it (`Files.createDirectories`) **before** the
+server launches (the server validates its allowed dirs at startup). The server forwards its own logs to
+stderr, which `StdioTransportFactory` already inherits.
+
+### 5. Connect policy = per-server graceful degrade
+`registry.connect()` catches per client and keeps only connected servers; only they contribute tools /
+participate in routing. GitHub down but `npx` ok → filesystem tools still work, and vice-versa. Zero
+servers connected → `AgenticLoop` is `null` → plain replies (existing behavior).
+
+### 6. `DEFAULT_MAX_ITERATIONS` raised 5 → 8
+The flow is 4 tool calls + 1 answer = 5 turns, exactly the old limit; any exploratory call (e.g. the
+LLM probing `list_allowed_directories`) would trip the guard. Raised to 8 in `AgenticLoop` for headroom
+— the contingency the Day-19 plan reserved, now made necessary by the longer flow.
+
+### 7. Routing visible in the `[AGENT]` log
+`AgenticLoop.execute(...)` logs `LLM requested tool → <server>: <name>(<args>)`, sourcing the server
+from `ToolRouter.serverFor(name)`. This makes routing observable for **filesystem** calls too (the
+third-party server has no `[MCP SERVER]` cyan log). Our GitHub server still logs cyan `[MCP SERVER]`.
+
+### 8. Orchestration in the interactive REPL startup — no new run mode
+Multi-server connect happens in `Main.kt` at startup (where the single connect used to be), before
+`Repl.start()`; `registry.close()` runs in the existing `finally`. **Digest mode is untouched** (it
+never used `AgenticLoop`).
+
+---
+
+## Files
+
+**New:**
+- `mcp/src/main/kotlin/org/example/mcp/McpClientRegistry.kt` — composite `McpClient` + `ToolRouter`.
+- `mcp/src/test/kotlin/org/example/mcp/McpClientRegistryTest.kt` — routing/merge unit tests (fakes).
+
+**Modified:**
+- `mcp/.../config/ServerConfig.kt` — add `serverFilesystem(allowedDir)`.
+- `app/.../Main.kt` — build two `SdkMcpClient`s (HTTP github + stdio filesystem), create the sandbox
+  dir, wrap both in `McpClientRegistry`, connect/listTools/merge, pass it to `AgenticLoop` as both the
+  `McpClient` and the `ToolRouter`; `close()` in `finally`.
+- `app/.../agent/AgenticLoop.kt` — optional `ToolRouter`; routed-server log; `DEFAULT_MAX_ITERATIONS`
+  5 → 8.
+- `.gitignore` — add `/agent-fs/`.
+
+**Reused unchanged:** `SdkMcpClient`, `StdioTransportFactory`, `HttpClientTransportFactory`,
+`McpToolAdapter.toToolSpec()`, the GitHub server + all its tools, `DigestMain`/`CommitCollector`.
+
+---
+
+## Verification
+
+**Unit test (`McpClientRegistryTest`, JUnit 5, hand-written fakes — no network/npx):**
+- `listTools()` returns the **merged** tools from every connected server (order = registration order).
+- `callTool` routes to the owning fake (records which fake handled it); other fake untouched.
+- Unknown tool → `IllegalArgumentException`.
+- `serverFor` returns the owning server name, `null` for unknown.
+- Collision: two fakes advertise the same tool → first-registered owns it; a warning is emitted.
+- A fake whose `connect()` throws is skipped; the other still contributes its tools (degrade policy).
+
+**E2E (manual — the headline check):**
+1. Start our GitHub server: `./gradlew :mcp:run` (HTTP/SSE on `127.0.0.1:3001`).
+2. Run the agent: `./gradlew :app:run` (`ANTHROPIC_API_KEY` set). At startup it creates `agent-fs/`,
+   launches the filesystem server via `npx`, connects **both**, and prints the merged tool list.
+3. Ask (steer the write to the filesystem server — see the caveat below): *"Get the latest 5 commits
+   for JetBrains/kotlin and build a report with the github tools. Then use the filesystem server
+   (write_file) to save the report to kotlin-report.md inside the allowed directory, and read it back
+   with read_text_file to show me."*
+4. The `[AGENT → <server>]` logs show, in order: `get_recent_commits` + `build_commit_report` → **github**,
+   then (optionally `list_allowed_directories`) + `write_file` + `read_text_file` → **filesystem** —
+   proving correct selection, ordering, and routing across both servers.
+5. The file exists in `agent-fs/` and its content matches the report; the final answer echoes it back.
+
+> **Caveat (capability overlap, observed in E2E):** both servers offer a "save" — our Day-19
+> `save_to_file` (writes to `mcp/out/`) and the filesystem server's `write_file` (sandboxed to
+> `agent-fs/`). A vague *"save it to a file"* lets the model pick our `save_to_file`, after which a
+> filesystem `read_*` is correctly denied (cross-sandbox) and the flow loops. This is a demo-phrasing
+> matter, **not** an orchestration bug — routing is correct either way. The headline request therefore
+> names `write_file`/the filesystem server explicitly so the WRITE crosses to the second server. The
+> exploratory `list_allowed_directories` turn the model sometimes inserts is exactly why
+> `DEFAULT_MAX_ITERATIONS` was raised to 8 (decision #6).
+6. **No regression:** `./gradlew build` green (Days 11–19 unaffected); interactive + digest still work.
+   Graceful degrade: with `npx`/the filesystem server unavailable, the agent still serves GitHub tools.
