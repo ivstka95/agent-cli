@@ -21,3 +21,7 @@ build
 # Day-19 MCP server file-output dir (save_to_file writes here; runtime artifacts, never committed).
 # Root-anchored: this is where `./gradlew :mcp:run` (working dir = mcp/) resolves the default "out".
 /mcp/out/
+
+# Day-20 filesystem-server sandbox (the third-party server reads/writes here; runtime, never committed).
+# Root-anchored: matches the default MCP_FS_DIR resolved against the repo root in app/Main.kt.
+/agent-fs/
