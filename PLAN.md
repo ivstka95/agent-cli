@@ -662,3 +662,22 @@ also implements `ToolRouter.serverFor(tool)` so the `[AGENT → <server>]` log m
 `DEFAULT_MAX_ITERATIONS` (5 → 8) for the longer flow. Connection degrades **per server**. Digest mode
 is untouched. **Full design, locked decisions, and verification live in
 [`mcp/PLAN.md`](mcp/PLAN.md) (Day 20 section).**
+
+---
+
+## Day 21 — RAG document indexing (`rag/` module) — PLANNED
+
+Day 21 starts **RAG week**, a new topic separate from Days 16–20's MCP work. Where **MCP** wires
+*external tools*, **RAG** works with *internal knowledge*: documents embedded into vectors, searched by
+similarity, and loaded into the model's context at inference. Day 21 builds only the **indexing
+pipeline** (the foundation) — repo docs + `.kt` sources → **chunk** (two comparable strategies) →
+**embed** (Ollama `nomic-embed-text`, 768-dim) → **normalize** → **JSON vector index** with per-chunk
+metadata (`source`/`file`/`section`/`chunkId`). Nothing is queried yet.
+
+**A new `:rag` Gradle module**, mirroring `:mcp` (isolated now, `:app`-dependable later so RAG can be
+folded into the agent). All IO sits behind three abstractions — `Embedder`/`OllamaEmbedder`,
+`VectorIndex`/`JsonVectorIndex` (cosine, normalized vectors, JSON on disk), and `ChunkingStrategy`
+(`FixedSizeChunking` + `StructuralChunking`) — so Day 22 (retrieval + LLM), reranking, and agent
+integration plug in without changing this code. The two strategies are **run and compared** (chunk
+counts/sizes/differences). Tests use a **fake embedder** (no live Ollama). **Full design, locked
+decisions, and verification live in [`rag/PLAN.md`](rag/PLAN.md).**

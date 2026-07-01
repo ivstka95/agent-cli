@@ -25,3 +25,7 @@ build
 # Day-20 filesystem-server sandbox (the third-party server reads/writes here; runtime, never committed).
 # Root-anchored: matches the default MCP_FS_DIR resolved against the repo root in app/Main.kt.
 /agent-fs/
+
+# Day-21 RAG vector index output (JSON indexes written by :rag:run; runtime artifacts, never committed).
+# Root-anchored: matches the default RAG_INDEX_DIR resolved against the repo root (:rag:run workingDir).
+/rag-index/
