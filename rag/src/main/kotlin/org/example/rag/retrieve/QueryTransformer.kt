@@ -3,14 +3,16 @@ package org.example.rag.retrieve
 /**
  * First stage of the retrieval pipeline: rewrite/expand the raw question before it is embedded.
  *
- * Day-23 seat. In Day 22 the only impl is [NoOpQueryTransformer] (identity) — the stage is wired but
- * passes the query through unchanged, so query rewrite can drop in here without touching the retriever.
+ * [transform] is `suspend` because the Day-23 impl rewrites the query with an LLM (which lives in
+ * `:app`, not here — `:rag` stays free of any generative-LLM dependency). The interface stays in
+ * `:rag` as a pure seam; the LLM-backed implementation lives in `:app` and is injected into the
+ * retriever. In Day 22 the only impl is [NoOpQueryTransformer] (identity, passthrough).
  */
 fun interface QueryTransformer {
-    fun transform(query: String): String
+    suspend fun transform(query: String): String
 }
 
 /** Identity transform — returns the query unchanged. The Day-22 default. */
 object NoOpQueryTransformer : QueryTransformer {
-    override fun transform(query: String): String = query
+    override suspend fun transform(query: String): String = query
 }
