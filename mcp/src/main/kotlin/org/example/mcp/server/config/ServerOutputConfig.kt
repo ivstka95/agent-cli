@@ -8,7 +8,7 @@ import java.nio.file.Paths
  * default now; a different deploy location later is a config change (env var), not a code change —
  * mirroring [ServerBindConfig].
  *
- * The default `"out"` is RELATIVE: `./gradlew :mcp:run` runs with working dir = the `:mcp` project
+ * The default `"out"` is RELATIVE: `./gradlew :mcp:runServer` runs with working dir = the `:mcp` project
  * dir, so it resolves to `<repo>/mcp/out` (gitignored as `/mcp/out/`). [baseDir] is always absolute
  * and normalized so the tool's path-traversal guard has a stable root to compare against.
  */

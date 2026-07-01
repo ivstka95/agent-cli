@@ -5,6 +5,8 @@ import org.example.agent.ChainStep
 import org.example.agent.Message
 import org.example.agent.Role
 import org.example.memory.MemoryStore
+import org.example.rag.retrieve.IndexStrategy
+import org.example.ragmode.RagResponder
 import org.example.task.TaskHeader
 import org.example.task.TaskState
 import org.example.task.TaskStateMachine
@@ -19,15 +21,24 @@ import org.example.task.TransitionMode
  *
  * [out] is the output sink (defaults to stdout); tests inject a capture. The
  * transition [mode] and the pending-confirmation are session state — not persisted.
+ *
+ * [Day 22] [ragResponder] is the optional RAG-mode answer path (null when no index/embedder is
+ * wired, mirroring the optional agentic loop). When RAG is toggled on, plain questions route to it
+ * instead of the agent — a separate, stateless Q&A path (not mixed into short-term memory) so the
+ * with/without-RAG comparison stays clean.
  */
 class Repl(
     private val agent: Agent,
     private val memory: MemoryStore,
     private val out: (String) -> Unit = ::println,
+    private val ragResponder: RagResponder? = null,
 ) {
 
     /** Day 13 / 3c: session transition mode (default CONFIRM); not persisted. */
     private var mode: TransitionMode = TransitionMode.DEFAULT
+
+    /** [Day 22] Session RAG toggle (default off); not persisted. */
+    private var ragEnabled: Boolean = false
 
     suspend fun start() {
         out("CLI Agent. Type a message, :help for commands, or :quit to exit.")
@@ -52,7 +63,8 @@ class Repl(
     /** Process one input line (command or chat). Returns true if the REPL should exit. */
     internal suspend fun submit(input: String): Boolean {
         if (input.startsWith(":")) return handleCommand(input)
-        chat(input)
+        val responder = ragResponder
+        if (ragEnabled && responder != null) ragChat(responder, input) else chat(input)
         return false
     }
 
@@ -131,6 +143,41 @@ class Repl(
                     } else {
                         mode = target
                         out("Transition mode: ${mode.name.lowercase()}.")
+                    }
+                }
+            }
+            ":rag" -> {
+                // [Day 22] Toggle RAG mode. No arg → show state; on/off → set it. When on, plain
+                // questions route to the retriever+LLM path instead of the agent.
+                val responder = ragResponder
+                when {
+                    responder == null -> out("RAG is not available (no index/embedder wired).")
+                    arg.isEmpty() -> out("RAG mode: ${if (ragEnabled) "on" else "off"} (index: ${responder.strategy.fileName}).")
+                    else -> when (arg.lowercase()) {
+                        "on" -> {
+                            ragEnabled = true
+                            out("RAG mode: on (index: ${responder.strategy.fileName}).")
+                        }
+                        "off" -> {
+                            ragEnabled = false
+                            out("RAG mode: off.")
+                        }
+                        else -> out("Usage: :rag [on|off]")
+                    }
+                }
+            }
+            ":index" -> {
+                // [Day 22] Which Day-21 index RAG queries target. No arg → show it; otherwise switch.
+                val responder = ragResponder
+                when {
+                    responder == null -> out("RAG is not available (no index/embedder wired).")
+                    arg.isEmpty() -> out("Index: ${responder.strategy.fileName}. Valid: structural, fixed.")
+                    else -> when (val target = IndexStrategy.parse(arg)) {
+                        null -> out("Invalid index: '$arg'. Valid: structural, fixed.")
+                        else -> {
+                            responder.strategy = target
+                            out("Index: ${target.fileName}.")
+                        }
                     }
                 }
             }
@@ -258,6 +305,21 @@ class Repl(
             "Allowed from ${from.stageValue}: $allowedText."
     }
 
+    /**
+     * [Day 22] RAG-mode turn: retrieve context → grounded LLM answer with a deterministic `Sources:`
+     * line. Stateless by design — not recorded in short-term memory, so toggling RAG off leaves the
+     * agent's session history uncontaminated. One bad call must not kill the REPL.
+     */
+    private suspend fun ragChat(responder: RagResponder, input: String) {
+        try {
+            val answer = responder.answer(input, useRag = true)
+            out("Agent: ${answer.answer}")
+            out("  [tokens: in=${answer.inputTokens}, out=${answer.outputTokens}]")
+        } catch (e: Exception) {
+            out("Error: ${e.message}")
+        }
+    }
+
     private suspend fun chat(input: String) {
         try {
             // [Day 13] The agent runs the stage chain under the current mode; print each
@@ -340,6 +402,8 @@ class Repl(
             |  :task-show           print the active task file
             |  :stage <name>        set the active task's stage (planning/execution/validation/done)
             |  :mode [auto|confirm] show or set the transition mode (default: confirm)
+            |  :rag [on|off]        show or toggle RAG mode (retrieve + grounded answer with sources)
+            |  :index [structural|fixed]  show or switch which vector index RAG queries
             |  :next [instruction]  advance to the next stage and run it (optional instruction)
             |  :remember <text>     append a line to long-term knowledge
             |  :profile-new <name>     create an empty profile and make it active

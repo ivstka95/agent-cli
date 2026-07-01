@@ -1,0 +1,52 @@
+[
+  {
+    "question": "How does the agentic loop chain multiple tool calls in one turn?",
+    "expectation": "Explains the tool-use round-trip: runToolTurn returns ToolRequests, the loop executes them via the router and feeds tool_result back, repeating until the model answers.",
+    "expectedSources": ["AgenticLoop.kt", "LlmClient.kt"]
+  },
+  {
+    "question": "What is McpClientRegistry and how does it route a tool call to the right server?",
+    "expectation": "It fronts several named MCP clients, merges their tools, and routes each callTool to the owning client via an owner map; connection degrades per server.",
+    "expectedSources": ["McpClientRegistry.kt"]
+  },
+  {
+    "question": "How does the background digest mode persist which commits it has already seen?",
+    "expectation": "DigestScheduler computes the delta of new commits against a last-seen set persisted by DigestStore on disk, so restarts do not re-report old commits.",
+    "expectedSources": ["DigestScheduler.kt", "DigestStore.kt"]
+  },
+  {
+    "question": "What chunking strategies does the RAG module use for indexing?",
+    "expectation": "Two strategies behind ChunkingStrategy: fixed-size sliding character windows, and structural chunking that splits Markdown on headers and Kotlin on top-level declarations.",
+    "expectedSources": ["FixedSizeChunking.kt", "StructuralChunking.kt"]
+  },
+  {
+    "question": "Where is the agent's final system prompt assembled?",
+    "expectation": "In Agent.buildSystemPrompt — the single assembly point that composes invariants, profile, knowledge, active task, and stage prompt in priority order.",
+    "expectedSources": ["Agent.kt"]
+  },
+  {
+    "question": "How are invariants injected into the system prompt?",
+    "expectation": "Invariants are injected FIRST, before the profile and other layers, as hard constraints the assistant must not violate.",
+    "expectedSources": ["Agent.kt", "InvariantStore.kt"]
+  },
+  {
+    "question": "How does the combined response generator return both a reply and a task update?",
+    "expectation": "It makes one forced tool-use structured call returning {reply, task_update, ...}; on parse failure it falls back to the raw reply without touching the task.",
+    "expectedSources": ["CombinedResponseGenerator.kt"]
+  },
+  {
+    "question": "How is the Anthropic Messages API called?",
+    "expectation": "AnthropicClient POSTs to https://api.anthropic.com/v1/messages via Ktor CIO with x-api-key and anthropic-version headers and a top-level system field.",
+    "expectedSources": ["AnthropicClient.kt"]
+  },
+  {
+    "question": "How are the two vector indexes stored on disk?",
+    "expectation": "JsonVectorIndex saves each index as rag-index/index-<strategy>.json with model, dimension, strategy, and normalized entries of vector + chunk.",
+    "expectedSources": ["JsonVectorIndex.kt"]
+  },
+  {
+    "question": "How does the REPL dispatch colon commands?",
+    "expectation": "handleCommand splits the input on the first space and matches the command in a when block, with an unknown-command fallthrough.",
+    "expectedSources": ["Repl.kt"]
+  }
+]

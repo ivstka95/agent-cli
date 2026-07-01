@@ -209,14 +209,82 @@ they cover.
   cosine first).
 
 **Manual E2E (user runs; Ollama up at `http://localhost:11434`):**
-`./gradlew :rag:run` → loads repo docs (`README.md`, `PLAN.md`, `mcp/PLAN.md`, `**/*.kt`), chunks
+`./gradlew :rag:runIndexer` → loads repo docs (`README.md`, `PLAN.md`, `mcp/PLAN.md`, `**/*.kt`), chunks
 with both strategies, embeds via Ollama, normalizes, writes `rag-index/index-fixed-size.json` +
 `rag-index/index-structural.json`. Confirm: (a) each JSON has `entries` with 768-float vectors + full
 metadata; (b) the 2-strategy comparison table prints (chunk counts / sizes / differences). `:app`,
 `:mcp`, digest untouched; `rag-index/` is gitignored.
 
-## OUT of scope (Day 22+, designed-for not built)
-- **Day 22 — RAG query:** embed a user question → `VectorIndex.search(queryVector, topK)` → inject the
-  top chunks into the prompt → LLM answer. The `search` seat already exists.
-- **Later — reranking:** re-order `search` candidates with a stronger signal before injection.
-- **Later — agent integration:** `:app → :rag` so the agent answers questions about its own codebase.
+---
+
+# Day 22 — RAG query (retrieval pipeline + agent RAG modes)
+
+Day 22 closes the loop: question → retrieve top-K chunks → grounded LLM answer with sources. `:rag`
+gains a **retriever** (still no generative LLM — that lives in `:app`); `:app` gains `:app → :rag` and
+a dedicated RAG Q&A path. Branch: `feat/day22-rag-query`, cut from fresh `main` after PR #13 merged.
+
+## Retrieval pipeline (`:rag`, package `org.example.rag.retrieve`)
+A staged, composable pipeline so Day 23 (rerank + query rewrite) plugs into passthrough seats:
+```
+[QueryTransformer] → embed (OllamaEmbedder) → VectorIndex.search(topK) → [Reranker] → List<SearchResult>
+```
+- `RagRetriever` — the retrieval-only seam (`suspend retrieve(question, topK): List<SearchResult>`).
+- `DefaultRagRetriever(embedder, index, queryTransformer = NoOp, reranker = NoOp)` — the Day-22 impl.
+- `QueryTransformer` / `Reranker` — interfaces with **no-op identity** default impls
+  (`NoOpQueryTransformer`, `NoOpReranker`). Wired but passthrough — the explicit **Day-23 seats**.
+- **Reuses `SearchResult(chunk, score)`** as the hit type (no new `RetrievedChunk`). Sources come from
+  `chunk.metadata` (`file`, `section`).
+- `IndexStrategy` enum (`STRUCTURAL` / `FIXED`) + `parse`; `RagConfig` gains `topK` (default 5,
+  `RAG_TOP_K`), `indexStrategy` (default structural, `RAG_INDEX_STRATEGY`), and `indexFile(strategy)`
+  = `<indexDir>/index-<name>.json`. The chosen index is loaded via `JsonVectorIndex.load`.
+
+## Agent RAG modes (`:app`, package `org.example.ragmode`)
+- `RagResponder(llmClient, config, retrieverFactory)` — the GENERATOR half, **decoupled** from the
+  task-state machine / memory / invariants (clean with/without-RAG comparison):
+  - `answer(q, useRag = false)` — bare question → LLM (baseline); retriever untouched.
+  - `answer(q, useRag = true)` — retrieve top-K → context block (each chunk prefixed
+    `[Source: <file>, section: <section>]`) + anti-hallucination system prompt (answer only from
+    context, cite sources, admit gaps) → LLM → **deterministic `Sources: [file:section, …]` append**
+    from metadata (reliable, independent of the model citing).
+  - Retrievers built/cached per `IndexStrategy`; `setStrategy` switches the index.
+- REPL: `:rag [on|off]` toggles RAG mode (a plain question then routes to `RagResponder`, a stateless
+  path not written to short-term memory); `:index [structural|fixed]` switches the queried index. Both
+  mirror the `:mode` command idiom. `Repl` takes a nullable-defaulted `ragResponder` (like the optional
+  agentic loop), so existing tests compile unchanged. `Main.kt` wires an `OllamaEmbedder` + responder
+  and closes the embedder in `finally`.
+
+## Comparison runner + eval set
+- `CompareMain` (`org.example.ragmode.CompareMainKt`, task `:app:runRagEval`, mirrors `runDigest`):
+  runs each control question through BOTH modes side by side + prints expectation + expected/retrieved
+  sources.
+- `ControlQuestion` + `app/src/main/resources/rag-eval/control-questions.json` — **10 English**
+  questions about THIS codebase (English on purpose: the corpus is English; cross-language retrieval
+  is weak). Each has `expectation` + `expectedSources`.
+
+## Verification (Day 22)
+- **Unit (`:rag:test`, `:app:test`, no Ollama):** retriever ranks a tiny in-memory index built with
+  `FakeEmbedder` and respects `topK`; passthrough stages are identity; `RagResponder` builds the
+  `[Source: …]` context + anti-hallucination instruction + `Sources:` append; baseline path never
+  calls the retriever; `IndexStrategy.parse` + `RagConfig` defaults; REPL `:rag`/`:index` state; eval
+  set loads 10 well-formed questions.
+- **Manual E2E (Ollama up, index built via `./gradlew :rag:runIndexer`):** `./gradlew run` (launches
+  ONLY the `:app` REPL — `:app` is the sole owner of the `run` task) → `:rag on` → English question →
+  grounded answer + real `Sources:`; `:rag off` → normal agent; `:index fixed`/`structural` switches;
+  `./gradlew :app:runRagEval` → 10 questions, both answers + expectations side by side. Days 11–21
+  untouched.
+
+## Run tasks (task-name ownership)
+`application` is applied to `:app`, `:mcp`, and `:rag`, so a bare `./gradlew run` would otherwise fan
+out to every module's `run`. Only `:app` keeps `run` (the interactive REPL); the other entry points are
+explicit tasks so `./gradlew run` is unambiguous:
+- `./gradlew run` → the `:app` agent REPL.
+- `./gradlew :rag:runIndexer` → build the JSON indexes (this module's indexer).
+- `./gradlew :mcp:runServer` → the GitHub MCP HTTP server; `./gradlew :app:runDigest` → the digest daemon.
+
+## OUT of scope (Day 23+, designed-for not built)
+- **Day 23 — reranking / relevance filter:** the `Reranker` passthrough seat re-orders/filters
+  `search` candidates with a stronger signal before generation.
+- **Day 23 — query rewrite / expansion:** the `QueryTransformer` passthrough seat rewrites the
+  question before embedding.
+- **Day 23 — similarity threshold / top-K before-after filtering.**
+- No changes to Day-21 indexing; no new embedder or model; nothing model-specific.

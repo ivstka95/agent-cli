@@ -69,7 +69,19 @@ application {
     mainClass = "org.example.mcp.server.ServerMainKt"
 }
 
-tasks.named<JavaExec>("run") {
+// [Day 22] The server must NOT be named `run`: a bare `./gradlew run` should launch only the :app
+// interactive REPL (the sole `run` owner). Disable the application plugin's auto `run` task and expose
+// the server under an explicit name (mirroring the `runClientDemo` task below).
+tasks.named<JavaExec>("run") { enabled = false }
+
+// Primary run target (Day 17): our GitHub MCP server over HTTP. `./gradlew :mcp:runServer`.
+tasks.register<JavaExec>("runServer") {
+    group = "application"
+    description = "Run our GitHub MCP server over HTTP (Day 17)."
+    mainClass = "org.example.mcp.server.ServerMainKt"
+    classpath = sourceSets["main"].runtimeClasspath
+    // A manually-registered JavaExec doesn't inherit the toolchain like the application plugin's `run`.
+    javaLauncher = javaToolchains.launcherFor(java.toolchain)
     // The HTTP server logs its bind URL and blocks; inherit stdio so logs surface.
     standardInput = System.`in`
 }

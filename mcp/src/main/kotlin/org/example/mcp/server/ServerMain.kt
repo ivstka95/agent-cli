@@ -8,7 +8,7 @@ import org.example.mcp.server.transport.HttpServerTransportFactory
 /**
  * Primary `:mcp` entry point (Day 17): starts our GitHub MCP server over HTTP and blocks.
  *
- * Run: `./gradlew :mcp:run` (then run the agent in another terminal). Override the bind address with
+ * Run: `./gradlew :mcp:runServer` (then run the agent in another terminal). Override the bind address with
  * `MCP_HOST` / `MCP_PORT` and the file-output dir with `MCP_OUTPUT_DIR` — a VPS deploy is a config
  * change, not a code change.
  */

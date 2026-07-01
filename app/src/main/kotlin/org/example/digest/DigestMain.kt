@@ -32,7 +32,7 @@ fun main() = runBlocking {
     } catch (e: Exception) {
         System.err.println(
             "Could not reach MCP server at $serverUrl (${e.message}). " +
-                "Start it first with `./gradlew :mcp:run`.",
+                "Start it first with `./gradlew :mcp:runServer`.",
         )
         exitProcess(1)
     }

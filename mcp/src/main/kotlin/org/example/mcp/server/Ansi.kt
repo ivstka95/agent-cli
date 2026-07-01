@@ -2,7 +2,7 @@ package org.example.mcp.server
 
 /**
  * Minimal ANSI color helper for the server's stdout logging, so MCP tool-call lines stand out in the
- * :mcp:run terminal. Server side uses cyan. Kept tiny and module-local on purpose — no cross-module
+ * :mcp:runServer terminal. Server side uses cyan. Kept tiny and module-local on purpose — no cross-module
  * coupling just for colors (the agent has its own copy in green).
  *
  * ESC is built from its code point (27) so the source stays free of invisible control bytes.

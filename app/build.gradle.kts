@@ -19,6 +19,10 @@ dependencies {
     // (:app -> :mcp). :mcp must NOT depend on :app.
     implementation(project(":mcp"))
 
+    // Day 22: the agent uses the RAG retriever (embed + vector search). One-directional
+    // (:app -> :rag); :rag stays retrieval-only and must NOT depend on :app.
+    implementation(project(":rag"))
+
     // Ktor client (CIO engine) + JSON content negotiation.
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.cio)
@@ -81,6 +85,19 @@ tasks.register<JavaExec>("runDigest") {
     javaLauncher = javaToolchains.launcherFor(java.toolchain)
     // Run from the repo root so DigestStore's File("digest/...") resolves to the project-root
     // digest/ dir (matching the root-anchored /digest/ gitignore rule), like the REPL's memory/.
+    workingDir = rootProject.projectDir
+}
+
+// [Day 22] RAG evaluation run mode, kept separate from the interactive REPL (the default `run`),
+// mirroring `runDigest`: runs the 10 control questions through both modes (with/without RAG).
+tasks.register<JavaExec>("runRagEval") {
+    group = "application"
+    description = "Run the Day-22 RAG evaluation: 10 control questions through both modes side by side."
+    mainClass = "org.example.ragmode.CompareMainKt"
+    classpath = sourceSets["main"].runtimeClasspath
+    // Pin to the project's Java 21 launcher (a manual JavaExec doesn't inherit the toolchain).
+    javaLauncher = javaToolchains.launcherFor(java.toolchain)
+    // Run from the repo root so RagConfig's default indexDir "rag-index" resolves at the project root.
     workingDir = rootProject.projectDir
 }
 

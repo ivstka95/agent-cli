@@ -172,7 +172,7 @@ Build incrementally; the module must compile and tests pass before this layer is
 
 ## Verification plan
 
-**(a) Connection establishes.** `./gradlew :mcp:run` connects to `server-everything` over stdio
+**(a) Connection establishes.** `./gradlew :mcp:runServer` connects to `server-everything` over stdio
 without error; after the handshake, print the server name/version.
 
 **(b) Tool list returns & prints correctly.** Output is **non-empty** and lists each tool's
@@ -222,7 +222,7 @@ Helper `CallToolResult.textOrError()` extracts text without touching content-blo
 
 ## Locked decisions / notes
 
-1. **`:mcp` primary run target → `org.example.mcp.server.ServerMainKt`** (`./gradlew :mcp:run` starts
+1. **`:mcp` primary run target → `org.example.mcp.server.ServerMainKt`** (`./gradlew :mcp:runServer` starts
    the HTTP server). The Day-16 stdio client demo stays runnable: `./gradlew :mcp:runClientDemo`.
 2. **Extensible tool registry (Day-18 hook).** Adding a tool = one `McpToolDefinition` appended to
    `McpToolRegistry.default(...)`; `registerAll` and `GitHubMcpServer.build` are untouched.
@@ -440,7 +440,7 @@ and chains them. Confirmed in E2E only.
     assert nothing is ever written outside the base dir.
 
 **E2E (manual, the headline check):**
-1. Start the server: `./gradlew :mcp:run` (HTTP/SSE on `127.0.0.1:3001`).
+1. Start the server: `./gradlew :mcp:runServer` (HTTP/SSE on `127.0.0.1:3001`).
 2. Run the agent conversational mode with `ANTHROPIC_API_KEY` set; ask one request requiring the
    chain, e.g. *"Get the latest commits for JetBrains/kotlin, build a report, and save it to
    kotlin-report.md."*
@@ -612,7 +612,7 @@ never used `AgenticLoop`).
 - A fake whose `connect()` throws is skipped; the other still contributes its tools (degrade policy).
 
 **E2E (manual — the headline check):**
-1. Start our GitHub server: `./gradlew :mcp:run` (HTTP/SSE on `127.0.0.1:3001`).
+1. Start our GitHub server: `./gradlew :mcp:runServer` (HTTP/SSE on `127.0.0.1:3001`).
 2. Run the agent: `./gradlew :app:run` (`ANTHROPIC_API_KEY` set). At startup it creates `agent-fs/`,
    launches the filesystem server via `npx`, connects **both**, and prints the merged tool list.
 3. Ask (steer the write to the filesystem server — see the caveat below): *"Get the latest 5 commits
