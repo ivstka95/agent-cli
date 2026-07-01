@@ -13,3 +13,4 @@ plugins {
 rootProject.name = "agent-cli"
 include("app")
 include("mcp")
+include("rag")
