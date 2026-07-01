@@ -7,10 +7,11 @@ import org.example.rag.retrieve.QueryTransformer
 
 /**
  * [Day 23] The LLM-backed [QueryTransformer] — fills the `:rag` query-rewrite seat while keeping the
- * generative LLM in `:app`. It rephrases/expands the user's question (adding technical terms, class
- * names, synonyms) so the embedded query lands nearer the relevant code chunks — e.g. "how are the
- * indexes stored?" expands toward "JsonVectorIndex JSON serialization on disk", surfacing the file a
- * bare query missed.
+ * generative LLM in `:app`. Query rewrite helps *vague* queries (short, conversational, missing the
+ * corpus's technical terms) by clarifying intent and adding a key missing term. It does NOT help a
+ * query that is already precise: expanding an already-good query with synonyms pushes its embedding
+ * *away* from the target chunk and lowers cosine scores. So the prompt tells the model to leave
+ * specific queries unchanged and only rewrite vague ones — the model judges, no brittle code heuristic.
  *
  * The interface lives in `:rag` (a pure seam); this implementation is injected into the retriever by
  * [RagResponder.fromConfig], so `:rag` never imports an LLM client.
@@ -30,9 +31,12 @@ class LlmQueryRewriter(private val llmClient: LlmClient) : QueryTransformer {
 
     companion object {
         const val REWRITE_SYSTEM =
-            "You rewrite a user's question to improve retrieval from a Kotlin codebase's vector index. " +
-                "Rephrase and expand it with relevant technical terms, likely class/file names, and synonyms " +
-                "so it matches source code and docs more closely. Keep it in English and concise. " +
-                "Output ONLY the rewritten query — no preamble, no quotes, no explanation."
+            "You rewrite a user's question ONLY when doing so will improve retrieval from a Kotlin " +
+                "codebase's vector index. If the query is already specific and uses the right technical " +
+                "terms (class names, precise concepts), return it unchanged or nearly unchanged. Only " +
+                "rewrite vague, short, or conversational queries: clarify the intent and add a key missing " +
+                "technical term ONLY when it is clearly absent. Do NOT pad with synonyms or expand a query " +
+                "that is already precise — that pushes it away from the target and hurts retrieval. Keep it " +
+                "in English and concise. Output ONLY the query — no preamble, no quotes, no explanation."
     }
 }

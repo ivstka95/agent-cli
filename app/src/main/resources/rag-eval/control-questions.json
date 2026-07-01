@@ -1,16 +1,16 @@
 [
   {
-    "question": "How does the agentic loop chain multiple tool calls in one turn?",
+    "question": "how does the agent keep calling tools until it's done?",
     "expectation": "Explains the tool-use round-trip: runToolTurn returns ToolRequests, the loop executes them via the router and feeds tool_result back, repeating until the model answers.",
     "expectedSources": ["AgenticLoop.kt", "LlmClient.kt"]
   },
   {
-    "question": "What is McpClientRegistry and how does it route a tool call to the right server?",
+    "question": "how does it know which server handles a tool?",
     "expectation": "It fronts several named MCP clients, merges their tools, and routes each callTool to the owning client via an owner map; connection degrades per server.",
     "expectedSources": ["McpClientRegistry.kt"]
   },
   {
-    "question": "How does the background digest mode persist which commits it has already seen?",
+    "question": "how does it remember which commits it already showed?",
     "expectation": "DigestScheduler computes the delta of new commits against a last-seen set persisted by DigestStore on disk, so restarts do not re-report old commits.",
     "expectedSources": ["DigestScheduler.kt", "DigestStore.kt"]
   },
@@ -20,7 +20,7 @@
     "expectedSources": ["FixedSizeChunking.kt", "StructuralChunking.kt"]
   },
   {
-    "question": "Where is the agent's final system prompt assembled?",
+    "question": "where does the agent put together the text it sends the model?",
     "expectation": "In Agent.buildSystemPrompt — the single assembly point that composes invariants, profile, knowledge, active task, and stage prompt in priority order.",
     "expectedSources": ["Agent.kt"]
   },
