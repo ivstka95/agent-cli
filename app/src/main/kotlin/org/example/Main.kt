@@ -13,6 +13,8 @@ import org.example.mcp.config.ServerConfig
 import org.example.mcp.transport.HttpClientTransportFactory
 import org.example.mcp.transport.StdioTransportFactory
 import org.example.memory.MemoryStore
+import org.example.rag.config.RagConfig
+import org.example.ragmode.RagResponder
 import org.example.repl.Repl
 import java.nio.file.Files
 import java.nio.file.Paths
@@ -23,7 +25,7 @@ import kotlin.system.exitProcess
  * orchestration layer, the agentic loop, the agent, and the REPL together and run the loop.
  *
  * [Day 20] The agent connects to TWO MCP servers at once and routes each tool call to the owner:
- *  - our GitHub server over HTTP/SSE (start it first with `./gradlew :mcp:run`), and
+ *  - our GitHub server over HTTP/SSE (start it first with `./gradlew :mcp:runServer`), and
  *  - the third-party filesystem server over stdio via `npx`, sandboxed to [MCP_FS_DIR] (default
  *    `agent-fs/`).
  * Connection degrades per server: whichever connect contribute their tools; if none do, the agent
@@ -63,7 +65,7 @@ fun main() = runBlocking {
         if (tools.isEmpty()) {
             System.err.println(
                 "Warning: no MCP tools available (no server reachable). Running without tools — " +
-                    "start our server with `./gradlew :mcp:run` and ensure `npx` is installed.",
+                    "start our server with `./gradlew :mcp:runServer` and ensure `npx` is installed.",
             )
             null
         } else {
@@ -76,9 +78,15 @@ fun main() = runBlocking {
     }
 
     val agent = Agent(generator, memory, agenticLoop)
+
+    // [Day 22] Wire the RAG-mode answer path. The index (~10 MB) is loaded lazily on the first RAG
+    // query, not at startup; only the embedder's HTTP client is created now. `close()` shuts it down.
+    val ragResponder = RagResponder.fromConfig(llmClient, RagConfig.fromEnv())
+
     try {
-        Repl(agent, memory).start()
+        Repl(agent, memory, ragResponder = ragResponder).start()
     } finally {
         registry.close()
+        ragResponder.close()
     }
 }

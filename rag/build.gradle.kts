@@ -54,11 +54,21 @@ application {
     mainClass = "org.example.rag.MainKt"
 }
 
-tasks.named<JavaExec>("run") {
-    // Run from the repo root so RAG_REPO_ROOT="." and RAG_INDEX_DIR="rag-index" resolve against
-    // the project root (matching the root-anchored /rag-index/ gitignore rule), like :app's run.
+// [Day 22] The indexer must NOT be named `run`: a bare `./gradlew run` should launch only the :app
+// interactive REPL (the sole `run` owner). Disable the application plugin's auto `run` task and expose
+// the indexer under an explicit name (mirroring :app's `runDigest` / :mcp's `runClientDemo`).
+tasks.named<JavaExec>("run") { enabled = false }
+
+tasks.register<JavaExec>("runIndexer") {
+    group = "application"
+    description = "Build the RAG indexes: load repo docs, chunk (both strategies), embed via Ollama, write rag-index/index-*.json."
+    mainClass = "org.example.rag.MainKt"
+    classpath = sourceSets["main"].runtimeClasspath
+    // A manually-registered JavaExec doesn't inherit the toolchain like the application plugin's `run`.
+    javaLauncher = javaToolchains.launcherFor(java.toolchain)
+    // Run from the repo root so RAG_REPO_ROOT="." and RAG_INDEX_DIR="rag-index" resolve against the
+    // project root (matching the root-anchored /rag-index/ gitignore rule). The indexer reads no stdin.
     workingDir = rootProject.projectDir
-    standardInput = System.`in`
 }
 
 tasks.named<Test>("test") {

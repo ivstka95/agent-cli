@@ -8,6 +8,12 @@ swarm is DESIGNED FOR but NOT implemented yet).
 Read this file at the start of every session before planning or writing code.
 
 > **Day 16 (Connect to MCP):** a separate, autonomous module — see [`mcp/PLAN.md`](mcp/PLAN.md).
+>
+> **Days 21–22 (RAG):** the `:rag` module (retrieval-only) — indexing (Day 21) and the query pipeline
+> (Day 22). See [`rag/PLAN.md`](rag/PLAN.md). Day 22 adds `:app → :rag` and a **RAG Q&A mode** in the
+> REPL (`:rag on/off`, `:index structural/fixed`), decoupled from the task-state machine; the generator
+> lives in `:app` (`org.example.ragmode.RagResponder`), the retriever in `:rag`. A `:app:runRagEval`
+> runner compares with/without-RAG answers over 10 English control questions.
 
 ---
 
@@ -551,8 +557,8 @@ execution" step would reuse this same loop as a pre-step (tools first, then the 
   MCP `Tool` → Anthropic `ToolSpec` translation point. Tools are discovered live via `listTools()`.
 - **New round-trip primitive:** `LlmClient.runToolTurn(...)` (native tool-use, content blocks
   confined to `AnthropicClient`); `CombinedResponseGenerator` is untouched.
-- **Run order:** `./gradlew :mcp:run` (HTTP server), then `./gradlew :app:run`. If the server is
-  unreachable the agent still runs (no tools).
+- **Run order:** `./gradlew :mcp:runServer` (HTTP server), then `./gradlew run` (the agent REPL). If the
+  server is unreachable the agent still runs (no tools).
 
 **IMPLEMENTED IN DAY 18:** scheduler/periodic execution, persistence, 24/7 background — see below.
 Still NOT implemented: physical VPS deploy (the digest daemon is deploy-ready in principle, but
@@ -614,7 +620,7 @@ DigestMain (runBlocking)   ← NEW entry point (mainClass org.example.digest.Dig
 - `DigestAggregator` — pure `apply(previous, collected) → TickResult(state, newCommits, summary)`.
 - `DigestScheduler` — `tick()` (testable, off the timing loop) + `run()` (the loop).
 
-**Run order:** `./gradlew :mcp:run` (HTTP server), then `./gradlew :app:runDigest`. Config via env:
+**Run order:** `./gradlew :mcp:runServer` (HTTP server), then `./gradlew :app:runDigest`. Config via env:
 `MCP_SERVER_URL`, `DIGEST_OWNER`, `DIGEST_REPO`, `DIGEST_LIMIT`, `DIGEST_INTERVAL_SECONDS`. The
 interactive REPL is unchanged (`./gradlew :app:run`).
 

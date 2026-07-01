@@ -41,7 +41,7 @@ class GetRecentCommitsTool(private val github: GitHubClient) {
         val repo = (args?.get("repo") as? JsonPrimitive)?.contentOrNull
         val limitArg = (args?.get("limit") as? JsonPrimitive)?.intOrNull
 
-        // [Day 17] Color-highlighted transparency log (visible in the :mcp:run terminal). Full input.
+        // [Day 17] Color-highlighted transparency log (visible in the :mcp:runServer terminal). Full input.
         log(
             "tool call: $NAME(owner=$owner, repo=$repo, " +
                 "limit=${limitArg ?: "default($DEFAULT_LIMIT)"})  args=${args ?: "{}"}",
@@ -66,7 +66,7 @@ class GetRecentCommitsTool(private val github: GitHubClient) {
         }.also(::logResult)
     }
 
-    /** [Day 17] Logs the FULL result text (or error) in cyan to the :mcp:run terminal. */
+    /** [Day 17] Logs the FULL result text (or error) in cyan to the :mcp:runServer terminal. */
     private fun logResult(result: CallToolResult) = log("result:\n${result.textOrError()}")
 
     /** [Day 17/19] One cyan, bold-prefixed `[MCP SERVER]` line via the shared logger. */
