@@ -18,7 +18,7 @@ object CitationVerifier {
     }
 
     /** Collapse all whitespace runs to a single space and trim, so reflowed quotes still match. */
-    fun normalizeWs(text: String): String = text.replace(WHITESPACE, " ").trim()
+    private fun normalizeWs(text: String): String = text.replace(WHITESPACE, " ").trim()
 
     private val WHITESPACE = Regex("\\s+")
 }
