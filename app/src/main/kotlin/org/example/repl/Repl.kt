@@ -181,6 +181,27 @@ class Repl(
                     }
                 }
             }
+            ":filter" -> {
+                // [Day 23] Toggle the improved RAG pipeline (LLM query rewrite + similarity-threshold
+                // filter). No arg → show state; on/off → set it. Lets `:rag on` compare baseline vs
+                // improved retrieval live.
+                val responder = ragResponder
+                when {
+                    responder == null -> out("RAG is not available (no index/embedder wired).")
+                    arg.isEmpty() -> out("Filter (rewrite + threshold): ${if (responder.improved) "on" else "off"}.")
+                    else -> when (arg.lowercase()) {
+                        "on" -> {
+                            responder.improved = true
+                            out("Filter (rewrite + threshold): on.")
+                        }
+                        "off" -> {
+                            responder.improved = false
+                            out("Filter (rewrite + threshold): off.")
+                        }
+                        else -> out("Usage: :filter [on|off]")
+                    }
+                }
+            }
             ":next" -> advanceAndRun(arg)
             ":remember" -> {
                 if (arg.isEmpty()) {
@@ -314,6 +335,11 @@ class Repl(
         try {
             val answer = responder.answer(input, useRag = true)
             out("Agent: ${answer.answer}")
+            // [Day 23] When the improved pipeline runs, show the before→after retrieved counts so the
+            // filter's effect is visible; the baseline (no filter) leaves them equal.
+            if (responder.improved) {
+                out("  [retrieved ${answer.retrievedBefore} → kept ${answer.keptAfter}]")
+            }
             out("  [tokens: in=${answer.inputTokens}, out=${answer.outputTokens}]")
         } catch (e: Exception) {
             out("Error: ${e.message}")
@@ -404,6 +430,7 @@ class Repl(
             |  :mode [auto|confirm] show or set the transition mode (default: confirm)
             |  :rag [on|off]        show or toggle RAG mode (retrieve + grounded answer with sources)
             |  :index [structural|fixed]  show or switch which vector index RAG queries
+            |  :filter [on|off]     show or toggle the improved RAG pipeline (query rewrite + threshold filter)
             |  :next [instruction]  advance to the next stage and run it (optional instruction)
             |  :remember <text>     append a line to long-term knowledge
             |  :profile-new <name>     create an empty profile and make it active

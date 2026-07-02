@@ -16,8 +16,12 @@ import java.io.File
  * @param chunkMax hard cap on chunk length in characters — a structural section larger than this is
  *   split into fitting sub-chunks so the embedder's context limit is never exceeded.
  * @param indexDir output directory for the JSON indexes (gitignored).
- * @param topK number of chunks a Day-22 retrieval query returns (`VectorIndex.search` top-K).
+ * @param topK number of chunks the Day-22 baseline retrieval query returns (`VectorIndex.search` top-K).
  * @param indexStrategy which Day-21 index a retrieval query targets by default.
+ * @param scoreThreshold [Day 23] inclusive cosine cutoff for the relevance filter — hits with
+ *   `score < scoreThreshold` are dropped. A documented approximation; tune against the eval set.
+ * @param retrieveK [Day 23] the wide top-K the improved pipeline searches BEFORE filtering (the net).
+ * @param afterK [Day 23] the max chunks kept AFTER the relevance filter (fed to the LLM).
  */
 data class RagConfig(
     val ollamaHost: String = DEFAULT_HOST,
@@ -30,6 +34,9 @@ data class RagConfig(
     val indexDir: String = DEFAULT_INDEX_DIR,
     val topK: Int = DEFAULT_TOP_K,
     val indexStrategy: IndexStrategy = DEFAULT_INDEX_STRATEGY,
+    val scoreThreshold: Float = DEFAULT_SCORE_THRESHOLD,
+    val retrieveK: Int = DEFAULT_RETRIEVE_K,
+    val afterK: Int = DEFAULT_AFTER_K,
 ) {
     /** On-disk index file for [strategy] — `<indexDir>/index-<strategy.fileName>.json`. */
     fun indexFile(strategy: IndexStrategy = indexStrategy): File =
@@ -49,6 +56,12 @@ data class RagConfig(
         const val DEFAULT_TOP_K = 5
         val DEFAULT_INDEX_STRATEGY = IndexStrategy.STRUCTURAL
 
+        // [Day 23] Relevance-filter defaults. The threshold is a starting point for
+        // nomic-embed-text cosine scores — calibrate it against the printed eval scores.
+        const val DEFAULT_SCORE_THRESHOLD = 0.5f
+        const val DEFAULT_RETRIEVE_K = 20 // wide net before filtering
+        const val DEFAULT_AFTER_K = 5 // kept after filtering (matches baseline topK for a fair compare)
+
         fun fromEnv(): RagConfig = RagConfig(
             ollamaHost = env("OLLAMA_HOST") ?: DEFAULT_HOST,
             ollamaModel = env("OLLAMA_EMBED_MODEL") ?: DEFAULT_MODEL,
@@ -60,6 +73,9 @@ data class RagConfig(
             indexDir = env("RAG_INDEX_DIR") ?: DEFAULT_INDEX_DIR,
             topK = env("RAG_TOP_K")?.toIntOrNull() ?: DEFAULT_TOP_K,
             indexStrategy = env("RAG_INDEX_STRATEGY")?.let { IndexStrategy.parse(it) } ?: DEFAULT_INDEX_STRATEGY,
+            scoreThreshold = env("RAG_SCORE_THRESHOLD")?.toFloatOrNull() ?: DEFAULT_SCORE_THRESHOLD,
+            retrieveK = env("RAG_RETRIEVE_K")?.toIntOrNull() ?: DEFAULT_RETRIEVE_K,
+            afterK = env("RAG_AFTER_K")?.toIntOrNull() ?: DEFAULT_AFTER_K,
         )
 
         private fun env(name: String): String? = System.getenv(name)?.takeIf { it.isNotBlank() }

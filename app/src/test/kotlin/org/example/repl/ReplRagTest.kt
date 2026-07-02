@@ -16,6 +16,7 @@ import org.example.rag.model.Chunk
 import org.example.rag.model.ChunkMetadata
 import org.example.rag.retrieve.IndexStrategy
 import org.example.rag.retrieve.RagRetriever
+import org.example.rag.retrieve.RetrievalResult
 import org.example.ragmode.RagResponder
 import java.io.File
 import kotlin.io.path.createTempDirectory
@@ -48,8 +49,8 @@ private class StubLlmClient(private val reply: String) : LlmClient {
 }
 
 private class StubRetriever : RagRetriever {
-    override suspend fun retrieve(question: String, topK: Int): List<SearchResult> =
-        listOf(
+    override suspend fun retrieve(question: String, topK: Int): RetrievalResult {
+        val hits = listOf(
             SearchResult(
                 Chunk(
                     text = "the loop chains tool calls",
@@ -61,6 +62,8 @@ private class StubRetriever : RagRetriever {
                 0.9f,
             ),
         )
+        return RetrievalResult(hits, retrievedCount = hits.size)
+    }
 }
 
 class ReplRagTest {
@@ -81,7 +84,7 @@ class ReplRagTest {
     }
 
     private fun responder(reply: String = "grounded answer") =
-        RagResponder(StubLlmClient(reply), RagConfig(), retrieverFactory = { StubRetriever() })
+        RagResponder(StubLlmClient(reply), RagConfig(), retrieverFactory = { _, _ -> StubRetriever() })
 
     @Test
     fun `rag toggles on and off and reports state`() = runBlocking {
@@ -112,6 +115,26 @@ class ReplRagTest {
 
         repl.submit(":index bogus")
         assertTrue(printed("Invalid index: 'bogus'"))
+    }
+
+    @Test
+    fun `filter toggles the improved pipeline on the responder`() = runBlocking {
+        val responder = responder()
+        val repl = replWith(TrackingGenerator(), responder)
+
+        repl.submit(":filter")
+        assertTrue(printed("Filter (rewrite + threshold): off"))
+
+        repl.submit(":filter on")
+        assertTrue(printed("Filter (rewrite + threshold): on."))
+        assertTrue(responder.improved)
+
+        repl.submit(":filter off")
+        assertTrue(printed("Filter (rewrite + threshold): off."))
+        assertFalse(responder.improved)
+
+        repl.submit(":filter bogus")
+        assertTrue(printed("Usage: :filter [on|off]"))
     }
 
     @Test

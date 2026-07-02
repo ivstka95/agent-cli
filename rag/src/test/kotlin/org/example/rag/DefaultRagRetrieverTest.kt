@@ -10,6 +10,7 @@ import org.example.rag.retrieve.NoOpQueryTransformer
 import org.example.rag.retrieve.NoOpReranker
 import org.example.rag.retrieve.QueryTransformer
 import org.example.rag.retrieve.Reranker
+import org.example.rag.retrieve.ThresholdReranker
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -46,12 +47,16 @@ class DefaultRagRetrieverTest {
         )
         val retriever = DefaultRagRetriever(embedder, index(*chunks))
 
-        val hits = retriever.retrieve("beta content about dogs", topK = 2)
+        val result = retriever.retrieve("beta content about dogs", topK = 2)
+        val hits = result.results
 
         assertEquals(2, hits.size) // topK respected
         assertEquals(chunks[1].id, hits.first().chunk.id) // same text ⇒ score ~1 ⇒ ranked first
         assertEquals(1.0f, hits.first().score, 1e-4f)
         assertTrue(hits.zipWithNext().all { (a, b) -> a.score >= b.score }) // non-increasing
+        // No filter (NoOp reranker) ⇒ before == after == topK.
+        assertEquals(2, result.retrievedCount)
+        assertEquals(2, result.keptCount)
     }
 
     @Test
@@ -70,11 +75,30 @@ class DefaultRagRetrieverTest {
         val reranker = Reranker { _, results -> results.reversed() }
         val retriever = DefaultRagRetriever(embedder, index(*chunks), transformer, reranker)
 
-        val hits = retriever.retrieve("unrelated question", topK = 2)
+        val hits = retriever.retrieve("unrelated question", topK = 2).results
 
         assertEquals(2, hits.size)
         // Search ranked chunk 0 ("cats") first; reranker reversed it to last.
         assertEquals(chunks[1].id, hits.first().chunk.id)
         assertEquals(chunks[0].id, hits.last().chunk.id)
+    }
+
+    @Test
+    fun `threshold reranker shrinks the result and reports before-after counts`() = runBlocking {
+        // Query matches chunk 0 exactly (score ~1); the others score lower. A high threshold keeps
+        // only the exact match, so the wide search (topK=3) is filtered down to 1.
+        val chunks = arrayOf(chunk(0, "cats"), chunk(1, "dogs"), chunk(2, "birds"))
+        val retriever = DefaultRagRetriever(
+            embedder,
+            index(*chunks),
+            reranker = ThresholdReranker(minScore = 0.99f, keepTopK = 5),
+        )
+
+        val result = retriever.retrieve("cats", topK = 3)
+
+        assertEquals(3, result.retrievedCount) // wide net before filtering
+        assertEquals(1, result.keptCount) // only the exact match survives the cutoff
+        assertEquals(1, result.results.size)
+        assertEquals(chunks[0].id, result.results.single().chunk.id)
     }
 }

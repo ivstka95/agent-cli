@@ -281,10 +281,52 @@ explicit tasks so `./gradlew run` is unambiguous:
 - `./gradlew :rag:runIndexer` → build the JSON indexes (this module's indexer).
 - `./gradlew :mcp:runServer` → the GitHub MCP HTTP server; `./gradlew :app:runDigest` → the digest daemon.
 
-## OUT of scope (Day 23+, designed-for not built)
-- **Day 23 — reranking / relevance filter:** the `Reranker` passthrough seat re-orders/filters
-  `search` candidates with a stronger signal before generation.
-- **Day 23 — query rewrite / expansion:** the `QueryTransformer` passthrough seat rewrites the
-  question before embedding.
-- **Day 23 — similarity threshold / top-K before-after filtering.**
+## OUT of scope (Day 24+, designed-for not built)
 - No changes to Day-21 indexing; no new embedder or model; nothing model-specific.
+- No cross-encoder / Python reranker service; no external rerank API; no MMR (Day 23 uses a
+  similarity-threshold heuristic — see below).
+
+---
+
+# Day 23 — Reranking / relevance filter + query rewrite (IMPLEMENTED)
+
+Day 23 adds the **second stage after retrieval**, filling the two Day-22 passthrough seats:
+
+- **Reranker seat → `ThresholdReranker` (pure Kotlin, `:rag`).** A similarity-threshold relevance
+  filter: `results.filter { it.score >= minScore }.take(keepTopK)`. Ollama exposes only the embedding
+  layer (no `/api/rerank`, no cross-encoder head), so — per the task's allowed "similarity threshold /
+  heuristic" — we reuse the cosine `score` already in `SearchResult`. A true cross-encoder could drop
+  into the same seat later without touching the retriever.
+- **QueryTransformer seat → `LlmQueryRewriter` (`:app`).** An LLM rewrite/expansion of the question
+  before embedding (adds class names, synonyms, technical terms). To keep `:rag` free of a generative
+  LLM, `QueryTransformer.transform` was made `suspend` (the interface stays a pure seam in `:rag`);
+  the LLM-backed impl lives in `:app` and is injected into the retriever via `RagResponder.fromConfig`.
+  A blank rewrite or any LLM error falls back to the original query — a failed rewrite never breaks
+  retrieval.
+
+**Wide-net → filter.** Improved retrieval passes the wide `retrieveK` (20) to `search`, then the
+threshold filter drops the low-relevance tail and caps at `afterK` (5). Baseline stays the Day-22
+`search(topK=5)` with NoOp stages. `afterK == topK == 5`, so both feed ≤5 chunks to the LLM — the only
+differences are rewrite + wide net + threshold.
+
+**Before/after counts.** `RagRetriever.retrieve` now returns `RetrievalResult(results, retrievedCount)`
+(`keptCount = results.size`), so the pre-filter vs post-filter counts are visible; they thread into
+`RagAnswer` (`retrievedBefore` / `keptAfter`) and the eval.
+
+**Config (`RagConfig`):** `scoreThreshold` (`RAG_SCORE_THRESHOLD`, 0.5 — a documented approximation,
+tune against the eval scores), `retrieveK` (`RAG_RETRIEVE_K`, 20), `afterK` (`RAG_AFTER_K`, 5); `topK`
+(5) still drives the baseline path.
+
+**Comparison + interactive:** `:app:runRagEval` (`CompareMain`) now runs **baseline vs improved** over
+the 10 control questions, printing both answers, before→after counts, retrieved sources with cosine
+scores, and the expectation/expected sources. The REPL adds `:filter [on|off]` to toggle the improved
+pipeline live (a plain `:rag on` question then uses the current toggle).
+
+**Tests (`:rag:test`, `:app:test`, no Ollama/API key):** `ThresholdRerankerTest` (drop/keep + afterK
+cap + empty when all below cutoff); `DefaultRagRetrieverTest` (threshold shrinks + before/after counts);
+`LlmQueryRewriterTest` (rewrite via a fake LLM + blank/error fallback); `RagResponderTest` (improved
+uses `retrieveK` + reports counts/scores; baseline unregressed); `ReplRagTest` (`:filter` toggles).
+
+**Manual E2E (Ollama up, index built, `ANTHROPIC_API_KEY`):** `./gradlew :app:runRagEval` shows the
+filter's effect (retrieved 20 → kept ≤5) and improved retrieval surfacing relevant chunks a bare query
+missed (e.g. Q9 → `JsonVectorIndex.kt`); `./gradlew run` → `:rag on` + `:filter on/off` compares live.
