@@ -327,14 +327,27 @@ class Repl(
     }
 
     /**
-     * [Day 22] RAG-mode turn: retrieve context → grounded LLM answer with a deterministic `Sources:`
-     * line. Stateless by design — not recorded in short-term memory, so toggling RAG off leaves the
-     * agent's session history uncontaminated. One bad call must not kill the REPL.
+     * [Day 22] RAG-mode turn: retrieve context → grounded LLM answer. [Day 24] The answer is a
+     * structured `{answer, citations, dont_know}` call; we print the deterministic sources and the
+     * model's VERBATIM citations (each marked verbatim/unverified). When the model judged the context
+     * doesn't answer the question it says so and asks to clarify (dontKnow) instead of inventing.
+     * Stateless by design — not recorded in short-term memory, so toggling RAG off leaves the agent's
+     * session history uncontaminated. One bad call must not kill the REPL.
      */
     private suspend fun ragChat(responder: RagResponder, input: String) {
         try {
             val answer = responder.answer(input, useRag = true)
-            out("Agent: ${answer.answer}")
+            if (answer.dontKnow) out("Agent (I don't know): ${answer.answer}") else out("Agent: ${answer.answer}")
+            if (answer.sources.isNotEmpty()) {
+                out("  sources: [${answer.sources.joinToString(", ")}]")
+            }
+            if (answer.citations.isNotEmpty()) {
+                out("  citations:")
+                answer.citations.forEach { c ->
+                    val mark = if (c.verbatim) "verbatim" else "unverified"
+                    out("    [$mark] \"${c.quote}\" — ${c.source}")
+                }
+            }
             // [Day 23] When the improved pipeline runs, show the before→after retrieved counts so the
             // filter's effect is visible; the baseline (no filter) leaves them equal.
             if (responder.improved) {

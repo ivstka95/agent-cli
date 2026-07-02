@@ -35,17 +35,26 @@ private class TrackingGenerator : ResponseGenerator {
     }
 }
 
-private class StubLlmClient(private val reply: String) : LlmClient {
+private class StubLlmClient(private val reply: String, private val dontKnow: Boolean = false) : LlmClient {
     override suspend fun complete(systemPrompt: String, messages: List<Message>): LlmResult =
         LlmResult(reply, inputTokens = 2, outputTokens = 2)
 
+    // [Day 24] The RAG path is a structured call. A normal answer carries one verbatim citation (the
+    // quote is a substring of StubRetriever's chunk text, so it verifies); a dont-know answer carries none.
     override suspend fun completeStructured(
         systemPrompt: String,
         messages: List<Message>,
         toolName: String,
         toolDescription: String,
         inputSchema: JsonObject,
-    ): StructuredResult = throw UnsupportedOperationException()
+    ): StructuredResult {
+        val payload = if (dontKnow) {
+            """{"answer":"$reply","citations":[],"dont_know":true}"""
+        } else {
+            """{"answer":"$reply","citations":[{"quote":"the loop chains tool calls","source":"AgenticLoop.kt:run"}],"dont_know":false}"""
+        }
+        return StructuredResult(payload, inputTokens = 2, outputTokens = 2)
+    }
 }
 
 private class StubRetriever : RagRetriever {
@@ -85,6 +94,9 @@ class ReplRagTest {
 
     private fun responder(reply: String = "grounded answer") =
         RagResponder(StubLlmClient(reply), RagConfig(), retrieverFactory = { _, _ -> StubRetriever() })
+
+    private fun dontKnowResponder(reply: String) =
+        RagResponder(StubLlmClient(reply, dontKnow = true), RagConfig(), retrieverFactory = { _, _ -> StubRetriever() })
 
     @Test
     fun `rag toggles on and off and reports state`() = runBlocking {
@@ -147,7 +159,19 @@ class ReplRagTest {
 
         assertFalse(gen.called, "RAG mode must bypass the agent path")
         assertTrue(printed("Agent: grounded answer"))
-        assertTrue(printed("Sources: [AgenticLoop.kt:run]"), "deterministic sources appended")
+        assertTrue(printed("sources: [AgenticLoop.kt:run]"), "deterministic sources shown")
+        // [Day 24] Verbatim citation (quote + source) is rendered.
+        assertTrue(printed("[verbatim] \"the loop chains tool calls\" — AgenticLoop.kt:run"))
+    }
+
+    @Test
+    fun `when rag on a dont-know answer is rendered as I don't know`() = runBlocking {
+        val repl = replWith(TrackingGenerator(), dontKnowResponder("I don't know — please clarify."))
+
+        repl.submit(":rag on")
+        repl.submit("what's the weather today?")
+
+        assertTrue(printed("Agent (I don't know): I don't know — please clarify."))
     }
 
     @Test
