@@ -179,8 +179,9 @@ class RagResponder(
         const val RAG_SYSTEM =
             "You answer questions about a codebase using ONLY the provided context. " +
                 "Each context block is prefixed with its source as [Source: <file>, section: <section>]. " +
-                "You MUST respond by calling the provided tool. Back every claim with VERBATIM quotes " +
-                "copied exactly from the context, each tagged with the source it came from. " +
+                "You MUST respond by calling the provided tool. Back every claim with quotes copied " +
+                "CHARACTER-FOR-CHARACTER from a SINGLE context block — exact contiguous substrings, never " +
+                "altered, and never stitched together from separate spans — each tagged with its source. " +
                 "If the context does not actually answer the question, do NOT invent facts or rely on " +
                 "outside knowledge — instead say you don't know and ask the user to clarify."
 
@@ -198,9 +199,14 @@ class RagResponder(
               know (see dont_know), this is instead a short "I don't know" plus a request for the user
               to clarify or rephrase.
             - citations: an array of the exact fragments that back your answer. Each item has:
-                - quote: a fragment copied VERBATIM (character for character) from one of the context
-                  blocks — do NOT paraphrase, summarize, or fix wording. Keep it short (one sentence
-                  or clause).
+                - quote: a span copied CHARACTER-FOR-CHARACTER from ONE context block. Do not add, remove,
+                  reorder, or change ANY character — including punctuation, parentheses, or function
+                  arguments (e.g. do not add or drop an argument like `, turn`). Do NOT stitch non-adjacent
+                  fragments into one quote: each quote must be ONE contiguous span exactly as it appears in
+                  the source; to cite two separate spans, emit TWO separate citations. Prefer a SHORT span
+                  you can copy perfectly over a long one you might get wrong — a short exact quote beats a
+                  long inexact one. The quote is verified as an exact substring of the retrieved chunk; if it
+                  is not an exact substring it is worthless, so copy precisely.
                 - source: that block's source as "file:section" exactly as shown in its
                   [Source: <file>, section: <section>] header.
               For a normal grounded answer, provide at least one citation. When dont_know is true,
