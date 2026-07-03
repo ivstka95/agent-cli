@@ -93,6 +93,11 @@ data class AgentResponse(
     val outputTokens: Int,
     /** True when any call this turn updated the active working-memory task file. */
     val taskUpdated: Boolean = false,
+    /**
+     * [Day 25] Deterministic `file:section` sources for this turn's retrieved context (empty when
+     * RAG was off, unwired, or retrieval found/returned nothing). The REPL always shows them.
+     */
+    val sources: List<String> = emptyList(),
 ) {
     /**
      * The chain's replies collapsed into ONE assistant turn for session history

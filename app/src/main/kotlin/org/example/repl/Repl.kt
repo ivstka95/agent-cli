@@ -40,6 +40,14 @@ class Repl(
     /** [Day 22] Session RAG toggle (default off); not persisted. */
     private var ragEnabled: Boolean = false
 
+    /**
+     * [Day 25] Whether the AGENT path grounds each turn with RAG (task memory + retrieval + history —
+     * the production-like chat). Default ON; `:ground off` drops to the plain Days 11–15 agent. This is
+     * independent of [ragEnabled]: `:rag on` routes to the standalone stateless Q&A (Day 22–24) and
+     * takes precedence in submit(); `:ground` only affects the agent path. Not persisted.
+     */
+    private var groundEnabled: Boolean = true
+
     suspend fun start() {
         out("CLI Agent. Type a message, :help for commands, or :quit to exit.")
         while (true) {
@@ -202,6 +210,21 @@ class Repl(
                     }
                 }
             }
+            ":ground" -> when (arg.lowercase()) {
+                // [Day 25] Toggle whether the AGENT grounds each turn with RAG (task memory + retrieval
+                // + history — the production-like chat). Default on. Independent of `:rag` (the standalone
+                // stateless path). No arg → show state; on/off → set it.
+                "" -> out("Grounding: ${if (groundEnabled) "on" else "off"} (agent uses RAG on every turn).")
+                "on" -> {
+                    groundEnabled = true
+                    out("Grounding: on.")
+                }
+                "off" -> {
+                    groundEnabled = false
+                    out("Grounding: off.")
+                }
+                else -> out("Usage: :ground [on|off]")
+            }
             ":next" -> advanceAndRun(arg)
             ":remember" -> {
                 if (arg.isEmpty()) {
@@ -363,11 +386,20 @@ class Repl(
         try {
             // [Day 13] The agent runs the stage chain under the current mode; print each
             // step as it happens (real time, not buffered) via the callback.
-            val response = agent.run(input, memory.shortTerm.history(), mode) { step -> printStep(step) }
+            // [Day 25] Ground the turn with RAG when grounding is on (the production-like chat).
+            val response = agent.run(input, memory.shortTerm.history(), mode, useRag = groundEnabled) { step ->
+                printStep(step)
+            }
             // Only record the turn once it succeeds, so failed turns don't pollute the
             // session history. The chain's replies collapse into one assistant turn.
             memory.shortTerm.add(Message(Role.USER, input))
             memory.shortTerm.add(Message(Role.ASSISTANT, response.assistantText))
+
+            // [Day 25] ALWAYS show the deterministic sources for a grounded turn (empty when grounding
+            // is off / retrieval found nothing) — the production-like chat is sourced every turn.
+            if (response.sources.isNotEmpty()) {
+                out("  sources: [${response.sources.joinToString(", ")}]")
+            }
 
             // Stage label (from CODE) + token totals at the END — the label reflects the
             // FINAL stage the chain stopped on.
@@ -441,7 +473,8 @@ class Repl(
             |  :task-show           print the active task file
             |  :stage <name>        set the active task's stage (planning/execution/validation/done)
             |  :mode [auto|confirm] show or set the transition mode (default: confirm)
-            |  :rag [on|off]        show or toggle RAG mode (retrieve + grounded answer with sources)
+            |  :ground [on|off]     show or toggle agent grounding (task memory + RAG on every turn; default on)
+            |  :rag [on|off]        show or toggle standalone RAG mode (stateless retrieve + grounded answer)
             |  :index [structural|fixed]  show or switch which vector index RAG queries
             |  :filter [on|off]     show or toggle the improved RAG pipeline (query rewrite + threshold filter)
             |  :next [instruction]  advance to the next stage and run it (optional instruction)

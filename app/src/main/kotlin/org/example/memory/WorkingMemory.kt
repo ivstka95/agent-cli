@@ -74,6 +74,10 @@ class WorkingMemory(private val dir: File) {
      * (`stage` and `stage_complete`, Day 13). They are driven by the state machine, so a
      * model-supplied task update can never set or regress them. No-op if there is no active
      * task. (A field absent from the current file is left to whatever CODE writes next.)
+     *
+     * [Day 25] Also preserves the `## Goal` section ONCE it is non-empty: the dialogue goal is task
+     * memory, so after it is set it becomes code-owned like the header fields and 10–15 turns of
+     * model rewrites cannot drift it. An empty Goal stays model-fillable (planning refines the goal).
      */
     fun overwriteActivePreservingHeader(content: String) {
         val name = activeTaskName() ?: return
@@ -84,7 +88,23 @@ class WorkingMemory(private val dir: File) {
             val preserved = headerLineValue(current, key)
             if (preserved != null) result = withHeaderLine(result, key, preserved)
         }
+        val currentGoal = sectionBody(current, GOAL_SECTION)
+        if (currentGoal.isNotBlank()) result = withSectionBody(result, GOAL_SECTION, currentGoal)
         file.writeText(result)
+    }
+
+    /** [Day 25] The active task's `## Goal` body (the dialogue goal / task memory), trimmed; "" if none. */
+    fun activeGoal(): String = activeTaskContent()?.let { sectionBody(it, GOAL_SECTION) } ?: ""
+
+    /**
+     * [Day 25] Set the active task's `## Goal` body. Once non-empty it is preserved across model
+     * rewrites (see [overwriteActivePreservingHeader]). No-op / false if there is no active task.
+     */
+    fun setActiveGoal(goal: String): Boolean {
+        val name = activeTaskName() ?: return false
+        val file = taskFile(name)
+        file.writeText(withSectionBody(file.readText(), GOAL_SECTION, goal.trim()))
+        return true
     }
 
     /**
@@ -149,6 +169,37 @@ class WorkingMemory(private val dir: File) {
         return lines.joinToString("\n")
     }
 
+    /**
+     * The body-line range of the `## <name>` section in [lines] — the lines AFTER the header up to the
+     * next `## ` header (or end of file). null if the section is absent. Shared by the read/write
+     * section helpers so the boundary rule lives in one place. For an empty body the range is empty and
+     * `range.last + 1` still points at the section end.
+     */
+    private fun sectionRange(lines: List<String>, header: String): IntRange? {
+        val start = lines.indexOfFirst { it.trim() == header }
+        if (start < 0) return null
+        val end = ((start + 1) until lines.size).firstOrNull { lines[it].trimStart().startsWith("## ") } ?: lines.size
+        return (start + 1) until end
+    }
+
+    /** The body of the `## <name>` section in [text], trimmed. "" if the section is absent. */
+    private fun sectionBody(text: String, header: String): String {
+        val lines = text.lines()
+        val range = sectionRange(lines, header) ?: return ""
+        return lines.subList(range.first, range.last + 1).joinToString("\n").trim()
+    }
+
+    /**
+     * [text] with the body of its `## <name>` section replaced by [body] (blank-line padded to match
+     * the template shape). Returns [text] unchanged if the section is absent.
+     */
+    private fun withSectionBody(text: String, header: String, body: String): String {
+        val lines = text.lines()
+        val range = sectionRange(lines, header) ?: return text
+        val rebuilt = lines.subList(0, range.first) + listOf("", body, "") + lines.subList(range.last + 1, lines.size)
+        return rebuilt.joinToString("\n")
+    }
+
     /** All task names (file stems), sorted. */
     fun listTasks(): List<String> =
         (tasksDir.listFiles { f -> f.isFile && f.name.endsWith(".md") } ?: emptyArray())
@@ -193,5 +244,8 @@ class WorkingMemory(private val dir: File) {
     private companion object {
         /** Header fields the state machine owns; preserved on every model overwrite. */
         val CODE_OWNED_HEADER_KEYS = listOf("stage", "stage_complete", "proposed_transition")
+
+        /** [Day 25] The task-memory Goal section; preserved once set (see overwriteActivePreservingHeader). */
+        const val GOAL_SECTION = "## Goal"
     }
 }
