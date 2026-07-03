@@ -330,3 +330,50 @@ uses `retrieveK` + reports counts/scores; baseline unregressed); `ReplRagTest` (
 **Manual E2E (Ollama up, index built, `ANTHROPIC_API_KEY`):** `./gradlew :app:runRagEval` shows the
 filter's effect (retrieved 20 → kept ≤5) and improved retrieval surfacing relevant chunks a bare query
 missed (e.g. Q9 → `JsonVectorIndex.kt`); `./gradlew run` → `:rag on` + `:filter on/off` compares live.
+
+---
+
+# Day 24 — Citations, sources & anti-hallucination (IMPLEMENTED)
+
+Day 24 hardens the **generation** half: a RAG answer must ALWAYS return an answer, its sources, and
+**citations** (verbatim fragments from the retrieved chunks). All work is in `:app` (the `:rag`
+retrieval/rerank layer is untouched — Day 23's threshold filter still runs first).
+
+**Structured RAG answer.** `RagResponder.answer(useRag=true)` no longer makes a plain `complete()` call
+that appends a `Sources:` string. It now makes ONE forced-tool-use `completeStructured` call (the
+`CombinedResponseGenerator` pattern) returning `{answer, citations:[{quote, source}], dont_know}` — so
+the required fields are GUARANTEED present. Same resilience as the combined call: first attempt → one
+retry with a format reminder → graceful fallback (raw payload as the answer, no citations, never crash).
+
+**Sources stay deterministic; citations come from the LLM.** The top-level `sources` list is still
+built from chunk metadata (`sourcesOf`) — always present whenever chunks were retrieved, independent of
+what the model chose. `citations` are the model's VERBATIM fragments, each tagged with its `file:section`
+source.
+
+**Verbatim check = anti-hallucination proof.** `CitationVerifier.isVerbatim(quote, chunkTexts)`
+(pure, whitespace-normalized substring, case-sensitive) verifies each quote is a real substring of some
+retrieved chunk. Each `Citation` carries a `verbatim` flag stamped at answer time; `RagAnswer` exposes
+`hasCitations` / `allCitationsVerbatim` derived properties. A fabricated or paraphrased quote → `✗`.
+
+**"I don't know" = the LLM's semantic backstop.** Even after the Day-23 threshold filter, if the chunks
+don't actually answer the question the model sets `dont_know` and returns a short "I don't know — please
+clarify" ask instead of inventing (Q9-style miss or an off-topic question). It's a GOOD result if it
+never fires on the 10 good questions — the point is it CAN.
+
+**Eval + interactive.** `:app:runRagEval` (`CompareMain`) prints, per question, each citation
+(quote + source, `verbatim`/`UNVERIFIED`) and three automatic ✓/✗ checks — sources present, citations
+present, all citations verbatim — plus a final tally over the improved pipeline; answer-meaning-vs-
+citations is judged BY EYE (no LLM judge). The REPL's `:rag` answers now render `sources:` + a
+`citations:` block, and a `dont_know` answer is shown as "Agent (I don't know): …".
+
+**Tests (`:app:test`, no Ollama/API key):** `RagResponderTest` (structured parse → answer/citations/
+sources/dontKnow; a normal answer always has non-empty sources + citations; a fabricated quote is
+flagged non-verbatim; dontKnow returns the clarification ask with no citations; parse-failure falls
+back without crashing); `CitationVerifierTest` (substring ✓, paraphrase/non-substring ✗, whitespace-
+reflow still matches); `ReplRagTest` (`:rag` renders citations + sources; dontKnow rendered distinctly).
+`RecordingLlmClient` now returns a canned structured tool payload.
+
+**Manual E2E (Ollama up, index built, `ANTHROPIC_API_KEY`):** `./gradlew :app:runRagEval` — every good
+question shows sources ✓ + citations ✓, citations verbatim ✓, answer matches its citations by eye, then
+the summary tally; demo dontKnow via an off-topic question or the Q9 miss. `./gradlew run` → `:rag on`
+renders answer + sources + verbatim citations.

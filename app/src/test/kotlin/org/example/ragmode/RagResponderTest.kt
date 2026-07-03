@@ -55,7 +55,13 @@ class RagResponderTest {
 
     @Test
     fun `with RAG - assembles context with sources and anti-hallucination instruction`() = runBlocking {
-        val llm = RecordingLlmClient()
+        val llm = RecordingLlmClient(
+            structuredJson = """
+                {"answer":"It's built in Agent.buildSystemPrompt.",
+                 "citations":[{"quote":"assembles the system prompt","source":"Agent.kt:buildSystemPrompt"}],
+                 "dont_know":false}
+            """.trimIndent(),
+        )
         val retriever = FakeRagRetriever(
             listOf(
                 hit("Agent.kt", "buildSystemPrompt", "assembles the system prompt", 0.9f),
@@ -68,17 +74,84 @@ class RagResponderTest {
         assertTrue(retriever.called)
         assertEquals(5, retriever.lastTopK) // topK from config
         // Anti-hallucination instruction is in the system prompt.
-        assertTrue(llm.systemPrompt!!.contains("does not contain the answer"))
+        assertTrue(llm.systemPrompt!!.contains("does not actually answer the question"))
         // Context block carries the [Source: file, section: …] prefixes and the chunk text.
         val userContent = llm.messages.single().content
         assertTrue(userContent.contains("[Source: Agent.kt, section: buildSystemPrompt]"))
         assertTrue(userContent.contains("[Source: Repl.kt, section: handleCommand]"))
         assertTrue(userContent.contains("assembles the system prompt"))
         assertTrue(userContent.contains("Question: Where is the system prompt built?"))
-        // Deterministic Sources: line appended to the answer, from metadata.
+        // [Day 24] Answer is the structured field (no appended Sources line); sources stay deterministic.
+        assertEquals("It's built in Agent.buildSystemPrompt.", answer.answer)
         assertEquals(listOf("Agent.kt:buildSystemPrompt", "Repl.kt:handleCommand"), answer.sources)
-        assertTrue(answer.answer.endsWith("Sources: [Agent.kt:buildSystemPrompt, Repl.kt:handleCommand]"))
-        assertTrue(answer.answer.startsWith("the answer"))
+        assertFalse(answer.dontKnow)
+        // [Day 24] Citation carries the verbatim quote + its source, verified against the chunk text.
+        val citation = answer.citations.single()
+        assertEquals("assembles the system prompt", citation.quote)
+        assertEquals("Agent.kt:buildSystemPrompt", citation.source)
+        assertTrue(citation.verbatim)
+    }
+
+    @Test
+    fun `a normal answer always carries non-empty sources and citations`() = runBlocking {
+        val llm = RecordingLlmClient(
+            structuredJson = """
+                {"answer":"grounded","citations":[{"quote":"dispatches commands","source":"Repl.kt:handleCommand"}],
+                 "dont_know":false}
+            """.trimIndent(),
+        )
+        val retriever = FakeRagRetriever(listOf(hit("Repl.kt", "handleCommand", "dispatches commands", 0.8f)))
+
+        val answer = responder(llm, retriever).answer("How are commands handled?", useRag = true)
+
+        assertTrue(answer.sources.isNotEmpty())
+        assertTrue(answer.citations.isNotEmpty())
+        assertTrue(answer.citations.all { it.verbatim })
+    }
+
+    @Test
+    fun `a fabricated quote is flagged not verbatim`() = runBlocking {
+        val llm = RecordingLlmClient(
+            structuredJson = """
+                {"answer":"grounded","citations":[{"quote":"this text is nowhere in the chunk","source":"Repl.kt:handleCommand"}],
+                 "dont_know":false}
+            """.trimIndent(),
+        )
+        val retriever = FakeRagRetriever(listOf(hit("Repl.kt", "handleCommand", "dispatches commands", 0.8f)))
+
+        val answer = responder(llm, retriever).answer("q", useRag = true)
+
+        assertFalse(answer.citations.single().verbatim) // the quote isn't a substring of any chunk
+    }
+
+    @Test
+    fun `dont-know path returns the clarification ask with no citations`() = runBlocking {
+        val llm = RecordingLlmClient(
+            structuredJson = """{"answer":"I don't know — please clarify.","citations":[],"dont_know":true}""",
+        )
+        // A chunk was retrieved (passed the threshold) but doesn't address the question.
+        val retriever = FakeRagRetriever(listOf(hit("Repl.kt", "handleCommand", "dispatches commands", 0.6f)))
+
+        val answer = responder(llm, retriever).answer("what's the weather?", useRag = true)
+
+        assertTrue(answer.dontKnow)
+        assertTrue(answer.answer.contains("clarify"))
+        assertTrue(answer.citations.isEmpty())
+        // Sources considered are still surfaced even when the model doesn't know.
+        assertEquals(listOf("Repl.kt:handleCommand"), answer.sources)
+    }
+
+    @Test
+    fun `structured parse failure falls back to raw text without crashing`() = runBlocking {
+        val llm = RecordingLlmClient(structuredJson = "not valid json at all")
+        val retriever = FakeRagRetriever(listOf(hit("Repl.kt", "handleCommand", "dispatches commands", 0.8f)))
+
+        val answer = responder(llm, retriever).answer("q", useRag = true)
+
+        assertEquals("not valid json at all", answer.answer) // raw payload surfaced, no exception
+        assertTrue(answer.citations.isEmpty())
+        assertFalse(answer.dontKnow)
+        assertTrue(answer.sources.isNotEmpty()) // deterministic sources still present
     }
 
     @Test
