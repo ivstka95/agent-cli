@@ -101,6 +101,20 @@ tasks.register<JavaExec>("runRagEval") {
     workingDir = rootProject.projectDir
 }
 
+// [Day 25] Verification run mode, kept separate from the interactive REPL (the default `run`),
+// mirroring `runRagEval`: drives the agent (task memory + RAG + history) through the two long
+// scenarios over this codebase, checking the goal is retained and every answer stays sourced.
+tasks.register<JavaExec>("runDay25Eval") {
+    group = "application"
+    description = "Run the Day-25 verification: two 10–15-message scenarios through the grounded agent."
+    mainClass = "org.example.day25.Day25EvalMainKt"
+    classpath = sourceSets["main"].runtimeClasspath
+    // Pin to the project's Java 21 launcher (a manual JavaExec doesn't inherit the toolchain).
+    javaLauncher = javaToolchains.launcherFor(java.toolchain)
+    // Run from the repo root so RagConfig's default indexDir "rag-index" resolves at the project root.
+    workingDir = rootProject.projectDir
+}
+
 tasks.named<Test>("test") {
     // Use JUnit Platform for unit tests.
     useJUnitPlatform()

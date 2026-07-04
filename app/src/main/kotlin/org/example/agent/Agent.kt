@@ -1,6 +1,8 @@
 package org.example.agent
 
 import org.example.memory.MemoryStore
+import org.example.rag.index.SearchResult
+import org.example.rag.retrieve.RagRetriever
 import org.example.task.StagePrompts
 import org.example.task.TaskHeader
 import org.example.task.TaskState
@@ -22,6 +24,12 @@ class Agent(
     // path. When null (e.g. the MCP server is unavailable, or in tests) the agent falls back to a
     // plain one-shot reply, exactly as Days 11–16. The structured task path never uses it.
     private val agenticLoop: AgenticLoop? = null,
+    // [Day 25] Optional per-turn RAG retriever. When present and a turn sets useRag, the agent
+    // retrieves context for the question and injects it as a layer in buildSystemPrompt, and the
+    // deterministic sources ride back on AgentResponse. Null (or useRag off) → the plain Days 11–24
+    // behavior. [ragSearchK] is the search width (RagConfig.retrieveK for the improved pipeline).
+    private val ragRetriever: RagRetriever? = null,
+    private val ragSearchK: Int = 0,
 ) {
 
     /**
@@ -43,6 +51,8 @@ class Agent(
         userInput: String,
         history: List<Message>,
         mode: TransitionMode = TransitionMode.DEFAULT,
+        // [Day 25] Whether to ground THIS turn with RAG (the REPL's `:ground` state / the eval).
+        useRag: Boolean = false,
         onStep: (ChainStep) -> Unit = {},
     ): AgentResponse {
         val fullMessages = history + Message(Role.USER, userInput)
@@ -50,6 +60,20 @@ class Agent(
         var inputTokens = 0
         var outputTokens = 0
         var taskUpdated = false
+
+        // [Day 25] Retrieve ONCE per turn (shared across every stage step below). Graceful: a failure
+        // (Ollama down / missing index) degrades to null → a plain, ungrounded reply — never a crash.
+        // The same retrievedContext is injected into every buildSystemPrompt call this turn, and the
+        // deterministic sources ride back on the response regardless of what the model does.
+        val retriever = ragRetriever
+        val hits: List<SearchResult> =
+            if (useRag && retriever != null) {
+                runCatching { retriever.retrieve(userInput, ragSearchK).results }.getOrNull().orEmpty()
+            } else {
+                emptyList()
+            }
+        val retrievedContext: String? = hits.takeIf { it.isNotEmpty() }?.let { RagContext.contextBlock(it) }
+        val sources: List<String> = RagContext.sourcesOf(hits)
 
         fun emit(step: ChainStep) {
             steps += step
@@ -61,7 +85,7 @@ class Agent(
         // loop feeds the result back; otherwise a plain one-shot reply (Days 11–16). Same single
         // system-prompt assembly point either way.
         if (memory.working.activeTaskContent() == null) {
-            val systemPrompt = buildSystemPrompt(null)
+            val systemPrompt = buildSystemPrompt(null, retrievedContext)
             val (reply, inTok, outTok) = if (agenticLoop != null) {
                 val result = agenticLoop.run(systemPrompt, fullMessages)
                 Triple(result.reply, result.inputTokens, result.outputTokens)
@@ -72,7 +96,7 @@ class Agent(
             inputTokens += inTok
             outputTokens += outTok
             emit(ChainStep(stage = null, reply = reply))
-            return AgentResponse(steps, inputTokens, outputTokens, taskUpdated)
+            return AgentResponse(steps, inputTokens, outputTokens, taskUpdated, sources)
         }
 
         // Autonomous stage chain. Terminates by construction: the only path that
@@ -84,7 +108,7 @@ class Agent(
             val stage = TaskHeader.parse(contentBefore).stage
             val next = TaskStateMachine.nextStage(stage)
 
-            val gen = responseGenerator.generate(buildSystemPrompt(contentBefore), fullMessages, contentBefore)
+            val gen = responseGenerator.generate(buildSystemPrompt(contentBefore, retrievedContext), fullMessages, contentBefore)
             if (applyTaskUpdate(gen.taskUpdate, contentBefore)) taskUpdated = true
             inputTokens += gen.inputTokens
             outputTokens += gen.outputTokens
@@ -100,7 +124,7 @@ class Agent(
             if (stageComplete && next != null && !TaskStateMachine.isArtifactReady(stage, content)) {
                 val section = TaskStateMachine.firstEmptyArtifactSection(stage, content)!!
                 val followup = responseGenerator.generate(
-                    buildSystemPrompt(content) + selfCorrectionNote(section),
+                    buildSystemPrompt(content, retrievedContext) + selfCorrectionNote(section),
                     fullMessages,
                     content,
                 )
@@ -155,7 +179,7 @@ class Agent(
             }
         }
 
-        return AgentResponse(steps, inputTokens, outputTokens, taskUpdated)
+        return AgentResponse(steps, inputTokens, outputTokens, taskUpdated, sources)
     }
 
     /**
@@ -186,12 +210,13 @@ class Agent(
     //   [Day 12+11] long-term memory (active profile + knowledge) — below
     //   [Day 11]    working memory (active task context)     — below
     //   [Day 13]    current stage prompt                     — below (3a)
+    //   [Day 25]    retrieved context (RAG)                   — below (per-question reference)
     // Short-term memory (history) goes into the messages array, not here.
     //
     // Do not scatter system-prompt construction elsewhere — everything plugs in
     // at this function.
     // ──────────────────────────────────────────────────────────────────────────
-    private fun buildSystemPrompt(activeTask: String?): String = buildString {
+    private fun buildSystemPrompt(activeTask: String?, retrievedContext: String? = null): String = buildString {
         // [Day 14] Invariants: the FIRST, highest-priority section so they frame
         // everything below. Enforcement is this CODE-owned instruction (the agent
         // checks/refuses via the prompt — there is no runtime checker). Nothing is
@@ -242,12 +267,36 @@ class Agent(
             }
         }
 
+        // [Day 25] Retrieved context (RAG): reference material fetched for THIS turn's question.
+        // Placed after the task/stage block so the goal (task memory) and stage frame how to use it;
+        // the grounding note keeps the answer anchored to these sources and, when they don't cover the
+        // question, tells the agent to say so rather than invent (Day-24 anti-hallucination, as an
+        // instruction — no schema change). Injected only when retrieval actually returned hits.
+        if (retrievedContext != null) {
+            appendLine("# Retrieved context (RAG)")
+            appendLine(RAG_CONTEXT_INSTRUCTION)
+            appendLine()
+            appendLine(retrievedContext)
+            appendLine()
+        }
+
         append(BASE_INSTRUCTION)
     }
 
     private companion object {
         const val BASE_INSTRUCTION =
             "You are a helpful CLI assistant. Use the profile, knowledge, and active task above as context for your reply."
+
+        /**
+         * [Day 25] Grounding + anti-hallucination instruction for the retrieved-context layer (aligned
+         * with RagResponder.RAG_SYSTEM). The agent must answer from the retrieved blocks, name their
+         * sources, and refuse to invent when they don't cover the question.
+         */
+        const val RAG_CONTEXT_INSTRUCTION =
+            "The blocks below were retrieved for THIS question; each is prefixed with its source as " +
+                "[Source: <file>, section: <section>]. Ground your answer in them and name the sources " +
+                "you used. If the blocks do not actually answer the question, do NOT invent facts or " +
+                "rely on outside knowledge — say you don't know and ask the user to clarify."
 
         /**
          * [Day 14] CODE-owned invariant enforcement instruction (fixed in code, never user text).

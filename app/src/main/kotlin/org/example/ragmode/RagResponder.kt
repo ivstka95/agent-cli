@@ -11,6 +11,7 @@ import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import org.example.agent.LlmClient
 import org.example.agent.Message
+import org.example.agent.RagContext
 import org.example.agent.Role
 import org.example.agent.StructuredResult
 import org.example.rag.config.RagConfig
@@ -20,7 +21,6 @@ import org.example.rag.index.SearchResult
 import org.example.rag.retrieve.DefaultRagRetriever
 import org.example.rag.retrieve.IndexStrategy
 import org.example.rag.retrieve.RagRetriever
-import org.example.rag.retrieve.ThresholdReranker
 
 /**
  * The RAG-mode answer path — the GENERATOR half of RAG (the retriever lives in `:rag`). It is
@@ -157,12 +157,8 @@ class RagResponder(
                         JsonVectorIndex.load(file)
                     }
                     if (improved) {
-                        DefaultRagRetriever(
-                            embedder = embedder,
-                            index = index,
-                            queryTransformer = LlmQueryRewriter(llmClient),
-                            reranker = ThresholdReranker(config.scoreThreshold, config.afterK),
-                        )
+                        // [Day 25] Shared improved-pipeline builder (also used by the agent's retriever).
+                        improvedRetriever(embedder, index, llmClient, config)
                     } else {
                         DefaultRagRetriever(embedder, index) // Day-22 baseline: NoOp rewrite + NoOp rerank
                     }
@@ -262,24 +258,15 @@ class RagResponder(
 
         private val JSON = Json { ignoreUnknownKeys = true }
 
-        /** One context block per hit: `[Source: file, section: …]` then the chunk text; blank-line joined. */
-        internal fun contextBlock(hits: List<SearchResult>): String =
-            hits.joinToString("\n\n") { hit ->
-                val meta = hit.chunk.metadata
-                "[Source: ${meta.file}, section: ${meta.section ?: "—"}]\n${hit.chunk.text}"
-            }
+        /** [Day 25] Delegates to the shared [RagContext] so the `[Source: file, section]` contract lives once. */
+        internal fun contextBlock(hits: List<SearchResult>): String = RagContext.contextBlock(hits)
 
-        /** A hit's `file:section` label (with an em-dash placeholder for a missing section). */
-        private fun label(hit: SearchResult): String =
-            "${hit.chunk.metadata.file}:${hit.chunk.metadata.section ?: "—"}"
-
-        /** Deterministic `file:section` labels from the hits' metadata, de-duplicated, order preserved. */
-        internal fun sourcesOf(hits: List<SearchResult>): List<String> =
-            hits.map { label(it) }.distinct()
+        /** [Day 25] Deterministic, de-duplicated `file:section` labels — via the shared [RagContext]. */
+        internal fun sourcesOf(hits: List<SearchResult>): List<String> = RagContext.sourcesOf(hits)
 
         /** `file:section (0.63)` per kept hit (not de-duplicated) — surfaces cosine scores for the eval. */
         internal fun scoredSourcesOf(hits: List<SearchResult>): List<String> =
-            hits.map { "${label(it)} (${formatScore(it.score)})" }
+            hits.map { "${RagContext.label(it)} (${formatScore(it.score)})" }
 
         /** Locale-independent 2-decimal score, so eval output is stable across machines. */
         private fun formatScore(score: Float): String = String.format(java.util.Locale.US, "%.2f", score)

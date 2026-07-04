@@ -1,0 +1,40 @@
+[
+  {
+    "name": "rag-module",
+    "goal": "Understand the :rag retrieval module end to end: how documents are chunked, embedded, indexed, retrieved, filtered, and cited. Keep the scope to retrieval only (the LLM lives in :app). Prefer precise, sourced answers over generalities.",
+    "questions": [
+      "What is the RAG module for, and what does it do from a document to an answer?",
+      "How does the module split documents into chunks for retrieval?",
+      "What does it remember about each chunk so an answer can point back to where it came from?",
+      "How does the module turn text and questions into something it can search over?",
+      "How does it find the chunks most relevant to a question?",
+      "How does the improved pipeline filter out weak matches to give better answers?",
+      "Why can rewriting the user's question help retrieval find better chunks?",
+      "How does the module handle a question the retrieved context doesn't actually answer?",
+      "How does the agent avoid making things up when the context is thin?",
+      "How are the sources of an answer collected and shown to the user?",
+      "What's the difference between a source and a citation in this module?",
+      "How is retrieval quality checked or compared across different settings?",
+      "How does the module stay retrieval-only, with the language model living in the app layer?"
+    ]
+  },
+  {
+    "name": "agent-mcp-architecture",
+    "goal": "Understand the agent and MCP architecture: the single system-prompt assembly point, the task-state machine and memory layers, invariant enforcement, and MCP tool orchestration. Treat buildSystemPrompt as the one assembly point and the task file as the task memory; hold those terms fixed across the dialogue.",
+    "questions": [
+      "How does the agent build the prompt it sends to the model on each turn?",
+      "Why are the hard constraints (invariants) placed first in the prompt?",
+      "How does the agent remember a task's goal and decisions across many turns?",
+      "How does a task move through its stages from planning to done?",
+      "How does the agent know when a stage is genuinely finished?",
+      "What kinds of memory does the agent keep, and what is each one for?",
+      "What happens when a request would break one of the fixed constraints?",
+      "How does the conversation history reach the model so it sees the whole dialogue?",
+      "How does the agent use external tools through MCP during a turn?",
+      "When more than one tool server is connected, how does each call reach the right one?",
+      "How does the user profile change the way the agent answers?",
+      "How does the agent stay robust when the model returns a malformed response?",
+      "How do the pieces — memory, task state, tools, and prompt assembly — fit together?"
+    ]
+  }
+]

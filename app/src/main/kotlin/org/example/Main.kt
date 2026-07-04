@@ -15,6 +15,7 @@ import org.example.mcp.transport.StdioTransportFactory
 import org.example.memory.MemoryStore
 import org.example.rag.config.RagConfig
 import org.example.ragmode.RagResponder
+import org.example.ragmode.agentRagRetriever
 import org.example.repl.Repl
 import java.nio.file.Files
 import java.nio.file.Paths
@@ -77,16 +78,23 @@ fun main() = runBlocking {
         null
     }
 
-    val agent = Agent(generator, memory, agenticLoop)
+    // [Day 25] The production-like chat: the agent grounds every turn with RAG (task memory + retrieval
+    // + history). Build the agent's improved retriever (embed + index loaded lazily on the first
+    // grounded turn) and wire it in; `:ground off` in the REPL drops back to the plain Days 11–15 agent.
+    val ragConfig = RagConfig.fromEnv()
+    val (agentRetriever, agentRetrieverCloser) = agentRagRetriever(llmClient, ragConfig)
+    val agent = Agent(generator, memory, agenticLoop, ragRetriever = agentRetriever, ragSearchK = ragConfig.retrieveK)
 
-    // [Day 22] Wire the RAG-mode answer path. The index (~10 MB) is loaded lazily on the first RAG
-    // query, not at startup; only the embedder's HTTP client is created now. `close()` shuts it down.
-    val ragResponder = RagResponder.fromConfig(llmClient, RagConfig.fromEnv())
+    // [Day 22] Wire the standalone RAG-mode answer path (`:rag on`, stateless). The index (~10 MB) is
+    // loaded lazily on the first RAG query, not at startup; only the embedder's HTTP client is created
+    // now. `close()` shuts it down.
+    val ragResponder = RagResponder.fromConfig(llmClient, ragConfig)
 
     try {
         Repl(agent, memory, ragResponder = ragResponder).start()
     } finally {
         registry.close()
         ragResponder.close()
+        agentRetrieverCloser.close()
     }
 }
