@@ -9,6 +9,7 @@ class ComparisonMetricsTest {
         elapsedMs: Long,
         structuredValid: Boolean,
         sourcesPresent: Boolean,
+        outputTokens: Int = 0,
     ) = QuestionMetric(
         provider = "local",
         difficulty = "simple",
@@ -16,18 +17,18 @@ class ComparisonMetricsTest {
         answer = "a",
         elapsedMs = elapsedMs,
         inputTokens = 0,
-        outputTokens = 0,
+        outputTokens = outputTokens,
         structuredValid = structuredValid,
         sourcesPresent = sourcesPresent,
         dontKnow = false,
     )
 
     @Test
-    fun `summarize averages elapsed and tallies stability and grounding`() {
+    fun `summarize averages elapsed and output tokens and tallies stability and grounding`() {
         val metrics = listOf(
-            metric(elapsedMs = 100, structuredValid = true, sourcesPresent = true),
-            metric(elapsedMs = 200, structuredValid = false, sourcesPresent = true),
-            metric(elapsedMs = 300, structuredValid = true, sourcesPresent = false),
+            metric(elapsedMs = 100, structuredValid = true, sourcesPresent = true, outputTokens = 30),
+            metric(elapsedMs = 200, structuredValid = false, sourcesPresent = true, outputTokens = 60),
+            metric(elapsedMs = 300, structuredValid = true, sourcesPresent = false, outputTokens = 90),
         )
 
         val summary = summarize("local", metrics)
@@ -37,6 +38,7 @@ class ComparisonMetricsTest {
         assertEquals(200, summary.avgElapsedMs) // (100 + 200 + 300) / 3
         assertEquals(2, summary.structuredValidCount)
         assertEquals(2, summary.sourcesPresentCount)
+        assertEquals(60, summary.avgOutputTokens) // (30 + 60 + 90) / 3 — the conciseness signal
     }
 
     @Test
@@ -47,5 +49,6 @@ class ComparisonMetricsTest {
         assertEquals(0, summary.avgElapsedMs)
         assertEquals(0, summary.structuredValidCount)
         assertEquals(0, summary.sourcesPresentCount)
+        assertEquals(0, summary.avgOutputTokens)
     }
 }

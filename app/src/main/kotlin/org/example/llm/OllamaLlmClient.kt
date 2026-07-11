@@ -52,7 +52,13 @@ class OllamaLlmClient(
     }
 
     override suspend fun complete(systemPrompt: String, messages: List<Message>): LlmResult {
-        val parsed = postChat(ChatRequest(model = config.chatModel, messages = buildMessages(systemPrompt, messages)))
+        val parsed = postChat(
+            ChatRequest(
+                model = config.chatModel,
+                messages = buildMessages(systemPrompt, messages),
+                options = optionsFromConfig(),
+            ),
+        )
         return LlmResult(
             replyText = parsed.message.content,
             inputTokens = parsed.promptEvalCount,
@@ -78,6 +84,7 @@ class OllamaLlmClient(
                 model = config.chatModel,
                 messages = buildMessages(system, messages),
                 format = inputSchema,
+                options = optionsFromConfig(),
             ),
         )
         // message.content is the JSON string conforming to `format` → hand it back verbatim; the caller
@@ -86,6 +93,20 @@ class OllamaLlmClient(
             toolInputJson = parsed.message.content,
             inputTokens = parsed.promptEvalCount,
             outputTokens = parsed.evalCount,
+        )
+    }
+
+    /**
+     * [Day 29] Ollama generation options from [config], or null when NONE are set — a null `options` is
+     * omitted (`explicitNulls = false`), so an unset config produces a byte-identical body to Day 27/28.
+     * Individual null fields are likewise omitted, so a config that sets only some options sends only those.
+     */
+    private fun optionsFromConfig(): OllamaOptions? {
+        if (config.temperature == null && config.maxTokens == null && config.contextWindow == null) return null
+        return OllamaOptions(
+            temperature = config.temperature,
+            numPredict = config.maxTokens,
+            numCtx = config.contextWindow,
         )
     }
 
@@ -144,6 +165,17 @@ class OllamaLlmClient(
         // plain chat call; `explicitNulls = false` then omits it from the request body.
         val format: JsonObject? = null,
         val stream: Boolean = false,
+        // [Day 29] Generation tuning; null (default) → omitted, so Ollama's own defaults apply.
+        val options: OllamaOptions? = null,
+    )
+
+    // [Day 29] Ollama's generation options object. All nullable → `explicitNulls = false` omits any unset
+    // field, so we send only what the config specifies. `num_predict`/`num_ctx` are Ollama's snake_case names.
+    @Serializable
+    private data class OllamaOptions(
+        val temperature: Double? = null,
+        @SerialName("num_predict") val numPredict: Int? = null,
+        @SerialName("num_ctx") val numCtx: Int? = null,
     )
 
     @Serializable

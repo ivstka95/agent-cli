@@ -129,6 +129,20 @@ tasks.register<JavaExec>("runLocalVsCloud") {
     workingDir = rootProject.projectDir
 }
 
+// [Day 29] Local-LLM optimization comparison, mirroring `runLocalVsCloud`: runs the same 3 questions
+// through the RAG path on the local model with DEFAULT vs OPTIMIZED generation params + prompt, side by
+// side with metrics (elapsed, tokens) — the before/after of tuning in one run. Fully offline.
+tasks.register<JavaExec>("runOptimizationCompare") {
+    group = "application"
+    description = "Day 29: run 3 questions through the local model with default vs optimized params + prompt, side by side with metrics."
+    mainClass = "org.example.compare.OptimizationCompareMainKt"
+    classpath = sourceSets["main"].runtimeClasspath
+    // Pin to the project's Java 21 launcher (a manual JavaExec doesn't inherit the toolchain).
+    javaLauncher = javaToolchains.launcherFor(java.toolchain)
+    // Run from the repo root so RagConfig's default indexDir "rag-index" resolves at the project root.
+    workingDir = rootProject.projectDir
+}
+
 tasks.named<Test>("test") {
     // Use JUnit Platform for unit tests.
     useJUnitPlatform()

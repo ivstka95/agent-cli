@@ -102,27 +102,6 @@ internal suspend fun collectMetric(
     )
 }
 
-/** Prints each question with every provider's answer + metrics stacked beneath it. */
-private fun printSideBySide(questions: List<CompareQuestion>, runs: List<ProviderRun>) {
-    questions.forEachIndexed { i, q ->
-        println("\nQ${i + 1} [${q.difficulty}] ${q.question}")
-        println("-".repeat(100))
-        runs.forEach { run -> printMetric(run.metrics[i]) }
-        println("=".repeat(100))
-    }
-}
-
-/** One provider's metric block for one question: metrics line, then the answer (for by-eye quality). */
-private fun printMetric(m: QuestionMetric) {
-    fun mark(ok: Boolean) = if (ok) "✓" else "✗"
-    println(
-        "\n[${m.provider.uppercase()}] ${m.elapsedMs} ms · tokens ${m.inputTokens} in / ${m.outputTokens} out · " +
-            "structured ${mark(m.structuredValid)} · sources ${mark(m.sourcesPresent)}" +
-            if (m.dontKnow) " · I DON'T KNOW" else "",
-    )
-    println(m.answer.lineSequence().joinToString("\n") { "  $it" })
-}
-
 /** The SUMMARY: avg time (speed), structured-valid count (stability), sources count (grounding) per provider. */
 private fun printSummary(runs: List<ProviderRun>) {
     println("\nSUMMARY")
