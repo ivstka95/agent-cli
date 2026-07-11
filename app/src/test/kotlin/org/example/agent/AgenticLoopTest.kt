@@ -42,6 +42,20 @@ private class ScriptedToolLlm(private val turns: List<LlmTurn>) : LlmClient {
     }
 }
 
+/** A tool-less provider (local Ollama): runToolTurn is left as the interface default (throws). */
+private class ToollessLlm(private val reply: String) : LlmClient {
+    override suspend fun complete(systemPrompt: String, messages: List<Message>): LlmResult =
+        LlmResult(reply, inputTokens = 2, outputTokens = 3)
+
+    override suspend fun completeStructured(
+        systemPrompt: String,
+        messages: List<Message>,
+        toolName: String,
+        toolDescription: String,
+        inputSchema: JsonObject,
+    ): StructuredResult = error("not used")
+}
+
 private class FakeMcpClient(private val cannedText: String) : McpClient {
     val calls = mutableListOf<Pair<String, Map<String, Any?>>>()
 
@@ -151,6 +165,21 @@ class AgenticLoopTest {
         assertEquals(true, fed.isError)
         assertTrue(fed.content.contains("boom"), fed.content)
         assertEquals("done", result.reply)
+    }
+
+    @Test
+    fun `a tool-less provider degrades to a plain reply instead of crashing`() = runBlocking {
+        // [Day 27] Switching to a local model (no runToolTurn) must not blow up the agentic path.
+        val llm = ToollessLlm("plain fallback")
+        val mcp = FakeMcpClient(cannedText = "unused")
+        val loop = AgenticLoop(llm, mcp, tools)
+
+        val result = loop.run("system", listOf(Message(Role.USER, "hi")))
+
+        assertEquals("plain fallback", result.reply)
+        assertEquals(2, result.inputTokens)
+        assertEquals(3, result.outputTokens)
+        assertEquals(0, mcp.calls.size) // no tool ever executed
     }
 
     private fun emptySchema(): JsonObject = JsonObject(emptyMap())

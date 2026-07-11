@@ -38,7 +38,20 @@ class AgenticLoop(
         var outputTokens = 0
 
         repeat(maxIterations) {
-            val turn = llmClient.runToolTurn(systemPrompt, messages, exchanges, tools)
+            val turn = try {
+                llmClient.runToolTurn(systemPrompt, messages, exchanges, tools)
+            } catch (e: UnsupportedOperationException) {
+                // [Day 27] The active provider (local Ollama) has no native tool-use, so runToolTurn
+                // throws the interface's default. Degrade to a plain, tool-less reply from history rather
+                // than crash. (Cloud implements runToolTurn, so this only trips on local; switching back
+                // to cloud resumes tool use on the next turn.)
+                val plain = llmClient.complete(systemPrompt, messages)
+                return AgenticResult(
+                    reply = plain.replyText,
+                    inputTokens = inputTokens + plain.inputTokens,
+                    outputTokens = outputTokens + plain.outputTokens,
+                )
+            }
             inputTokens += turn.inputTokens
             outputTokens += turn.outputTokens
 

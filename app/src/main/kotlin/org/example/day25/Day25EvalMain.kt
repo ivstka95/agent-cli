@@ -5,7 +5,7 @@ import org.example.agent.Agent
 import org.example.agent.CombinedResponseGenerator
 import org.example.agent.Message
 import org.example.agent.Role
-import org.example.llm.AnthropicClient
+import org.example.llm.LlmClientFactory
 import org.example.memory.MemoryStore
 import org.example.rag.config.RagConfig
 import org.example.ragmode.agentRagRetriever
@@ -27,8 +27,9 @@ import kotlin.system.exitProcess
  * [RagConfig.fromEnv].
  */
 fun main() = runBlocking {
+    // [Day 27] LLM_PROVIDER (anthropic|ollama, default anthropic) picks the backend for the whole run.
     val llmClient = try {
-        AnthropicClient()
+        LlmClientFactory.fromEnv()
     } catch (e: IllegalStateException) {
         System.err.println(e.message)
         exitProcess(1)

@@ -1,7 +1,7 @@
 package org.example.ragmode
 
 import kotlinx.coroutines.runBlocking
-import org.example.llm.AnthropicClient
+import org.example.llm.LlmClientFactory
 import org.example.rag.config.RagConfig
 import kotlin.system.exitProcess
 
@@ -32,8 +32,10 @@ import kotlin.system.exitProcess
  * RAG_SCORE_THRESHOLD, OLLAMA_*).
  */
 fun main() = runBlocking {
+    // [Day 27] LLM_PROVIDER (anthropic|ollama, default anthropic) picks the backend; the eval runs
+    // whole through it. CLOUD still fails fast on a missing key; ollama runs the eval fully offline.
     val llmClient = try {
-        AnthropicClient()
+        LlmClientFactory.fromEnv()
     } catch (e: IllegalStateException) {
         System.err.println(e.message)
         exitProcess(1)
