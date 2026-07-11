@@ -115,6 +115,20 @@ tasks.register<JavaExec>("runDay25Eval") {
     workingDir = rootProject.projectDir
 }
 
+// [Day 28] Local-vs-cloud RAG comparison, kept separate from the interactive REPL (the default `run`),
+// mirroring `runRagEval`: runs the same 3 questions through the RAG path on local Ollama vs cloud
+// Anthropic, side by side with metrics. Cloud is optional — no ANTHROPIC_API_KEY runs fully local.
+tasks.register<JavaExec>("runLocalVsCloud") {
+    group = "application"
+    description = "Day 28: run 3 questions through the RAG path on local Ollama vs cloud Anthropic, side by side with metrics."
+    mainClass = "org.example.compare.LocalVsCloudMainKt"
+    classpath = sourceSets["main"].runtimeClasspath
+    // Pin to the project's Java 21 launcher (a manual JavaExec doesn't inherit the toolchain).
+    javaLauncher = javaToolchains.launcherFor(java.toolchain)
+    // Run from the repo root so RagConfig's default indexDir "rag-index" resolves at the project root.
+    workingDir = rootProject.projectDir
+}
+
 tasks.named<Test>("test") {
     // Use JUnit Platform for unit tests.
     useJUnitPlatform()
