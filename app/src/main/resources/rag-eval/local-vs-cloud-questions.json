@@ -1,0 +1,14 @@
+[
+  {
+    "difficulty": "simple",
+    "question": "What embedding model does the RAG module use by default?"
+  },
+  {
+    "difficulty": "medium",
+    "question": "How does the RAG module filter out irrelevant retrieved chunks?"
+  },
+  {
+    "difficulty": "hard",
+    "question": "How do chunking, embedding, retrieval, and relevance filtering fit together in the RAG pipeline?"
+  }
+]
