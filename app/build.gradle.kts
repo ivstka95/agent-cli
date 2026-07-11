@@ -29,6 +29,15 @@ dependencies {
     implementation(libs.ktor.client.content.negotiation)
     implementation(libs.ktor.serialization.kotlinx.json)
 
+    // [Day 30] Ktor server (CIO engine) — exposes the local LLM as a private HTTP chat service.
+    // Mirrors :mcp's server stack; reuses the same Ktor 3.x version and the CIO engine already on
+    // the client side. ContentNegotiation serializes the chat DTOs; StatusPages turns thrown errors
+    // into JSON (never a 500 stack trace) so the server stays up when Ollama is down.
+    implementation(libs.ktor.server.core)
+    implementation(libs.ktor.server.cio)
+    implementation(libs.ktor.server.content.negotiation)
+    implementation(libs.ktor.server.status.pages)
+
     // JSON serialization.
     implementation(libs.kotlinx.serialization.json)
 
@@ -47,6 +56,10 @@ dependencies {
 
     // Ktor MockEngine — stub the Anthropic API in the tool-use mapping test.
     testImplementation(libs.ktor.client.mock)
+
+    // [Day 30] Ktor testApplication host — drives GET / and POST /chat through the real routing
+    // layer offline (with a fake LlmClient), covering request/response wiring and status codes.
+    testImplementation(libs.ktor.server.test.host)
 
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
@@ -140,6 +153,22 @@ tasks.register<JavaExec>("runOptimizationCompare") {
     // Pin to the project's Java 21 launcher (a manual JavaExec doesn't inherit the toolchain).
     javaLauncher = javaToolchains.launcherFor(java.toolchain)
     // Run from the repo root so RagConfig's default indexDir "rag-index" resolves at the project root.
+    workingDir = rootProject.projectDir
+}
+
+// [Day 30] Local LLM as a private HTTP service, mirroring `runOptimizationCompare`: starts a thin Ktor
+// chat server (GET / chat page, POST /chat) over the EXISTING OllamaLlmClient with Day-29's optimized
+// config. Binds 0.0.0.0:SERVICE_PORT so it's reachable over the network. Kept separate from the REPL
+// (the default `run`); the server blocks until Ctrl-C.
+tasks.register<JavaExec>("runServer") {
+    group = "application"
+    description = "Day 30: run the local LLM as a private HTTP chat service (GET / chat page, POST /chat) on 0.0.0.0:8080."
+    mainClass = "org.example.service.ChatServerMainKt"
+    classpath = sourceSets["main"].runtimeClasspath
+    // Pin to the project's Java 21 launcher (a manual JavaExec doesn't inherit the toolchain).
+    javaLauncher = javaToolchains.launcherFor(java.toolchain)
+    // Run from the repo root for consistency with the other run tasks (no files are read, but keeps
+    // any relative env-driven paths anchored at the project root).
     workingDir = rootProject.projectDir
 }
 

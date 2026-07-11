@@ -34,12 +34,6 @@ import org.example.rag.config.RagConfig
  * before/after is reproducible regardless of ambient `OLLAMA_*` env vars.
  */
 
-// [Day 29] Tuned generation options for OUR task. Configurable in spirit (they live here, one place), but
-// fixed for a reproducible demo — see the class doc for the rationale behind each value.
-private const val OPT_TEMPERATURE = 0.2 // factual code Q&A → deterministic, less drift
-private const val OPT_NUM_PREDICT = 512 // cap output → concise + faster; still fits the structured JSON
-private const val OPT_NUM_CTX = 4096 // fit the full RAG prompt so retrieved context isn't truncated
-
 /** One config of the local model under comparison: a display [label], its [config], and its [systemPrompt]. */
 private data class Profile(val label: String, val config: LlmConfig, val systemPrompt: String)
 
@@ -48,17 +42,20 @@ fun main() = runBlocking {
     val base = LlmConfig.fromEnv()
     val questions = CompareQuestion.load()
 
-    // Both profiles share host + chat model; only the generation options and prompt differ. DEFAULT forces
-    // the options to null so it is a true baseline even if OLLAMA_* tuning vars are set in the environment.
+    // Both profiles share host + chat model; only the generation options and prompt differ. We clear the
+    // tuning fields first so the before/after is reproducible even if OLLAMA_* tuning vars are set: DEFAULT
+    // is a true baseline (all null), and `optimized()` then fills the cleared fields with the fixed tuned
+    // values (rather than honoring any ambient env override — the demo must be deterministic).
+    val cleared = base.copy(temperature = null, maxTokens = null, contextWindow = null)
     val profiles = listOf(
         Profile(
             label = "default",
-            config = base.copy(temperature = null, maxTokens = null, contextWindow = null),
+            config = cleared,
             systemPrompt = RagResponder.RAG_SYSTEM,
         ),
         Profile(
             label = "optimized",
-            config = base.copy(temperature = OPT_TEMPERATURE, maxTokens = OPT_NUM_PREDICT, contextWindow = OPT_NUM_CTX),
+            config = cleared.optimized(),
             systemPrompt = RagResponder.RAG_SYSTEM_OPTIMIZED,
         ),
     )
@@ -69,8 +66,8 @@ fun main() = runBlocking {
             "timing = generation only",
     )
     println(
-        "OPTIMIZED: temperature $OPT_TEMPERATURE · num_predict $OPT_NUM_PREDICT · num_ctx $OPT_NUM_CTX · " +
-            "tuned prompt (concise, code-focused)",
+        "OPTIMIZED: temperature ${LlmConfig.OPTIMIZED_TEMPERATURE} · num_predict ${LlmConfig.OPTIMIZED_NUM_PREDICT} · " +
+            "num_ctx ${LlmConfig.OPTIMIZED_NUM_CTX} · tuned prompt (concise, code-focused)",
     )
     println("=".repeat(100))
 
