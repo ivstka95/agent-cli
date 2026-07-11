@@ -6,7 +6,7 @@ import org.example.agent.AgenticLoop
 import org.example.agent.Ansi
 import org.example.agent.CombinedResponseGenerator
 import org.example.agent.toToolSpec
-import org.example.llm.AnthropicClient
+import org.example.llm.LlmProviderSwitch
 import org.example.mcp.McpClientRegistry
 import org.example.mcp.SdkMcpClient
 import org.example.mcp.config.ServerConfig
@@ -33,13 +33,18 @@ import kotlin.system.exitProcess
  * still runs with plain replies (no tools).
  */
 fun main() = runBlocking {
-    val llmClient = try {
-        AnthropicClient()
+    // [Day 27] Provider toggle. LLM_PROVIDER (anthropic|ollama, default anthropic) picks the initial
+    // backend; only IT is built now (so LLM_PROVIDER=ollama starts fully offline, no API key needed).
+    // `:llm local|cloud` swaps live via the single injected switch.client, which flows unchanged into the
+    // generator, agentic loop, RAG rewriter, and RagResponder. A cloud-default start with no
+    // ANTHROPIC_API_KEY still exits here, exactly as before.
+    val switch = try {
+        LlmProviderSwitch.fromEnv()
     } catch (e: IllegalStateException) {
-        // Missing API key — print a clear instruction and exit, no stack trace.
         System.err.println(e.message)
         exitProcess(1)
     }
+    val llmClient = switch.client
 
     val memory = MemoryStore()
     val generator = CombinedResponseGenerator(llmClient)
@@ -91,10 +96,11 @@ fun main() = runBlocking {
     val ragResponder = RagResponder.fromConfig(llmClient, ragConfig)
 
     try {
-        Repl(agent, memory, ragResponder = ragResponder).start()
+        Repl(agent, memory, ragResponder = ragResponder, llmSwitch = switch).start()
     } finally {
         registry.close()
         ragResponder.close()
         agentRetrieverCloser.close()
+        switch.close()
     }
 }

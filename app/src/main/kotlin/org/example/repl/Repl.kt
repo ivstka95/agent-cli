@@ -4,6 +4,9 @@ import org.example.agent.Agent
 import org.example.agent.ChainStep
 import org.example.agent.Message
 import org.example.agent.Role
+import org.example.llm.LlmProviderSwitch
+import org.example.llm.Provider
+import org.example.llm.SwitchResult
 import org.example.memory.MemoryStore
 import org.example.rag.retrieve.IndexStrategy
 import org.example.ragmode.RagResponder
@@ -32,6 +35,9 @@ class Repl(
     private val memory: MemoryStore,
     private val out: (String) -> Unit = ::println,
     private val ragResponder: RagResponder? = null,
+    // [Day 27] Optional live provider toggle (`:llm local|cloud`). Null → single fixed provider and no
+    // tag (tests / back-compat). Mirrors the optional [ragResponder].
+    private val llmSwitch: LlmProviderSwitch? = null,
 ) {
 
     /** Day 13 / 3c: session transition mode (default CONFIRM); not persisted. */
@@ -225,6 +231,25 @@ class Repl(
                 }
                 else -> out("Usage: :ground [on|off]")
             }
+            ":llm" -> {
+                // [Day 27] Show or switch the generative provider live (mirrors :rag/:ground). A failed
+                // switch (e.g. cloud with no API key) keeps the current provider — the app never crashes.
+                val sw = llmSwitch
+                when {
+                    sw == null -> out("Provider switching is not available.")
+                    arg.isEmpty() ->
+                        out("LLM provider: ${sw.current.label} (local: llama3.2 via Ollama · cloud: Claude).")
+                    else -> when (val target = Provider.parse(arg)) {
+                        null -> out("Usage: :llm [local|cloud]")
+                        else -> when (val result = sw.switchTo(target)) {
+                            is SwitchResult.Switched -> out("LLM provider: ${result.to.label}.")
+                            is SwitchResult.Unchanged -> out("LLM provider: already ${result.to.label}.")
+                            is SwitchResult.Failed ->
+                                out("Can't switch to ${result.to.label}: ${result.reason} Staying on ${sw.current.label}.")
+                        }
+                    }
+                }
+            }
             ":next" -> advanceAndRun(arg)
             ":remember" -> {
                 if (arg.isEmpty()) {
@@ -360,7 +385,7 @@ class Repl(
     private suspend fun ragChat(responder: RagResponder, input: String) {
         try {
             val answer = responder.answer(input, useRag = true)
-            if (answer.dontKnow) out("Agent (I don't know): ${answer.answer}") else out("Agent: ${answer.answer}")
+            printAgentReply(if (answer.dontKnow) "Agent (I don't know)" else "Agent", answer.answer)
             if (answer.sources.isNotEmpty()) {
                 out("  sources: [${answer.sources.joinToString(", ")}]")
             }
@@ -414,12 +439,23 @@ class Repl(
         }
     }
 
+    /**
+     * [Day 27] Print an agent answer line from ONE place, prefixed with the active-provider tag
+     * (`[local] ` / `[cloud] `) so every answer surface is tagged consistently. The tag is empty when no
+     * switch is wired (tests / back-compat), so existing `"Agent: …"` assertions still match. [label] is
+     * the speaker prefix (`Agent` or `Agent (I don't know)`).
+     */
+    private fun printAgentReply(label: String, body: String) {
+        val tag = llmSwitch?.let { "[${it.current.label}] " } ?: ""
+        out("$tag$label: $body")
+    }
+
     /** Print one chain step (from CODE): reply, refinement, then a performed OR pending transition. */
     private fun printStep(step: ChainStep) {
-        out("Agent: ${step.reply}")
+        printAgentReply("Agent", step.reply)
         step.refinement?.let { r ->
             out(">>> Refining ${r.stage.stageValue} artifact before advancing...")
-            out("Agent: ${r.replyText}")
+            printAgentReply("Agent", r.replyText)
         }
         step.transition?.let { t ->
             out(">>> Stage transition: ${t.from.stageValue} → ${t.to.stageValue}")
@@ -477,6 +513,7 @@ class Repl(
             |  :rag [on|off]        show or toggle standalone RAG mode (stateless retrieve + grounded answer)
             |  :index [structural|fixed]  show or switch which vector index RAG queries
             |  :filter [on|off]     show or toggle the improved RAG pipeline (query rewrite + threshold filter)
+            |  :llm [local|cloud]   show or switch the LLM provider (local llama3.2 via Ollama · cloud Claude)
             |  :next [instruction]  advance to the next stage and run it (optional instruction)
             |  :remember <text>     append a line to long-term knowledge
             |  :profile-new <name>     create an empty profile and make it active
