@@ -16,6 +16,7 @@ import org.example.agent.Role
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -96,6 +97,60 @@ class OllamaLlmClientTest {
         assertEquals("ok", result.replyText)
         assertEquals(0, result.inputTokens)
         assertEquals(0, result.outputTokens)
+    }
+
+    @Test
+    fun `complete sends tuned generation options when the config sets them`() = runBlocking {
+        var body = ""
+        val engine = MockEngine { request ->
+            body = String(request.body.toByteArray())
+            jsonOk("""{"message":{"content":"ok"}}""")
+        }
+        val config = LlmConfig(temperature = 0.2, maxTokens = 512, contextWindow = 4096)
+        val client = OllamaLlmClient(config, engine = engine)
+
+        client.complete("s", listOf(Message(Role.USER, "q")))
+
+        assertTrue(body.contains("\"options\""), body)
+        assertTrue(body.contains("\"temperature\":0.2"), body)
+        assertTrue(body.contains("\"num_predict\":512"), body)
+        assertTrue(body.contains("\"num_ctx\":4096"), body)
+    }
+
+    @Test
+    fun `completeStructured sends tuned generation options alongside the format schema`() = runBlocking {
+        val schema = buildJsonObject { put("type", "object") }
+        var body = ""
+        val engine = MockEngine { request ->
+            body = String(request.body.toByteArray())
+            jsonOk("""{"message":{"content":"{}"}}""")
+        }
+        val config = LlmConfig(temperature = 0.2, maxTokens = 512, contextWindow = 4096)
+        val client = OllamaLlmClient(config, engine = engine)
+
+        client.completeStructured("s", listOf(Message(Role.USER, "q")), "tool", "desc", schema)
+
+        assertTrue(body.contains("\"options\""), body)
+        assertTrue(body.contains("\"temperature\":0.2"), body)
+        assertTrue(body.contains("\"num_predict\":512"), body)
+        assertTrue(body.contains("\"num_ctx\":4096"), body)
+        assertTrue(body.contains("\"format\""), body) // options coexist with the structured-output schema
+    }
+
+    @Test
+    fun `an unset config omits the options object entirely (byte-identical to the baseline)`() = runBlocking {
+        var body = ""
+        val engine = MockEngine { request ->
+            body = String(request.body.toByteArray())
+            jsonOk("""{"message":{"content":"ok"}}""")
+        }
+        val client = OllamaLlmClient(LlmConfig(), engine = engine) // no temperature/maxTokens/contextWindow
+
+        client.complete("s", listOf(Message(Role.USER, "q")))
+
+        assertFalse(body.contains("\"options\""), body)
+        assertFalse(body.contains("\"num_predict\""), body)
+        assertFalse(body.contains("\"num_ctx\""), body)
     }
 
     @Test

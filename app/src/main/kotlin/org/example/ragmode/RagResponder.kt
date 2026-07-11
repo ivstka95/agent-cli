@@ -55,6 +55,9 @@ class RagResponder(
     private val config: RagConfig,
     private val retrieverFactory: (IndexStrategy, Boolean) -> RagRetriever,
     private val onClose: () -> Unit = {},
+    // [Day 29] The grounding system prompt. Defaults to [RAG_SYSTEM] so Days 11–28 are byte-identical; the
+    // optimization runner passes [RAG_SYSTEM_OPTIMIZED] to compare a tuned (concise, code-focused) prompt.
+    private val systemPrompt: String = RAG_SYSTEM,
 ) : AutoCloseable {
     /** The index a `useRag = true` query targets; switched by the REPL's `:index` command. */
     var strategy: IndexStrategy = config.indexStrategy
@@ -102,10 +105,10 @@ class RagResponder(
      * treats the raw tool payload as the answer with no citations. Token counts accumulate across tries.
      */
     private suspend fun structuredAnswer(messages: List<Message>): StructuredAnswer {
-        val first = completeStructured(RAG_SYSTEM, messages)
+        val first = completeStructured(systemPrompt, messages)
         parse(first.toolInputJson)?.let { return StructuredAnswer(it, first.inputTokens, first.outputTokens) }
 
-        val retry = completeStructured(RAG_SYSTEM + RETRY_REMINDER, messages)
+        val retry = completeStructured(systemPrompt + RETRY_REMINDER, messages)
         val inputTokens = first.inputTokens + retry.inputTokens
         val outputTokens = first.outputTokens + retry.outputTokens
         parse(retry.toolInputJson)?.let { return StructuredAnswer(it, inputTokens, outputTokens) }
@@ -140,7 +143,11 @@ class RagResponder(
          * leaves both as NoOp. [close] shuts the embedder's HTTP client. Used by both entry points
          * (the REPL and the `runRagEval` runner).
          */
-        fun fromConfig(llmClient: LlmClient, config: RagConfig): RagResponder {
+        fun fromConfig(
+            llmClient: LlmClient,
+            config: RagConfig,
+            systemPrompt: String = RAG_SYSTEM,
+        ): RagResponder {
             val embedder = OllamaEmbedder(config)
             // Load each strategy's index once and share it between the baseline and improved
             // retrievers (the index is read-only, so both flavors can query the same instance).
@@ -164,6 +171,7 @@ class RagResponder(
                     }
                 },
                 onClose = embedder::close,
+                systemPrompt = systemPrompt,
             )
         }
 
@@ -180,6 +188,21 @@ class RagResponder(
                 "altered, and never stitched together from separate spans — each tagged with its source. " +
                 "If the context does not actually answer the question, do NOT invent facts or rely on " +
                 "outside knowledge — instead say you don't know and ask the user to clarify."
+
+        // [Day 29] The tuned prompt for OUR task — keeps the SAME anti-hallucination / verbatim-citation
+        // contract as [RAG_SYSTEM] (grounding must not regress) but adds explicit conciseness + code focus.
+        // Paired with tuned generation params (low temperature, an output cap, a larger context window) by
+        // the optimization runner to compare answer quality/length/speed before vs after.
+        const val RAG_SYSTEM_OPTIMIZED =
+            "You are a precise coding assistant answering questions about a Kotlin codebase using ONLY the " +
+                "provided context. Each context block is prefixed with [Source: <file>, section: <section>]. " +
+                "You MUST respond by calling the provided tool. Be CONCISE: answer in at most 2-3 sentences, " +
+                "lead with the direct answer, use exact identifier/type/file names from the context, and add " +
+                "no preamble, restatement, or filler. Back every claim with quotes copied " +
+                "CHARACTER-FOR-CHARACTER from a SINGLE context block — exact contiguous substrings, never " +
+                "altered or stitched across spans — each tagged with its source. If the context does not " +
+                "actually answer the question, do NOT invent facts or use outside knowledge — say you don't " +
+                "know and ask the user to clarify."
 
         const val RAG_TOOL_NAME = "answer_with_citations"
 

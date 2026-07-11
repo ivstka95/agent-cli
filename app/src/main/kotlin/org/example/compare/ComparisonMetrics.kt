@@ -29,6 +29,10 @@ data class ProviderSummary(
     val avgElapsedMs: Long,
     val structuredValidCount: Int,
     val sourcesPresentCount: Int,
+    // [Day 29] Average output tokens — the conciseness signal the optimization runner reports (a tuned
+    // prompt + `num_predict` cap should shorten answers). Day 28's summary line doesn't print it, so its
+    // output is unchanged.
+    val avgOutputTokens: Int,
 )
 
 /** Pure aggregation over one provider's metrics — kept IO-free so it is unit-tested directly. */
@@ -41,5 +45,6 @@ fun summarize(label: String, metrics: List<QuestionMetric>): ProviderSummary {
         avgElapsedMs = avg,
         structuredValidCount = metrics.count { it.structuredValid },
         sourcesPresentCount = metrics.count { it.sourcesPresent },
+        avgOutputTokens = if (n == 0) 0 else metrics.sumOf { it.outputTokens } / n,
     )
 }
