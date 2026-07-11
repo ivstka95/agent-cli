@@ -14,6 +14,32 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 Type a message and press Enter; `:quit` or `:q` (or Ctrl-D) exits.
 
+### Local LLM as a private HTTP service (Day 30)
+
+Expose the local Ollama model as a small private chat service — a thin Ktor HTTP + HTML
+layer over the existing `OllamaLlmClient` (with Day-29's optimized generation params). No
+RAG, no auth, in-memory sessions only.
+
+```bash
+ollama serve                 # a local model must be running (default: llama3.2)
+./gradlew :app:runServer     # binds 0.0.0.0:8080 — open http://localhost:8080
+```
+
+Routes: `GET /` serves a self-contained chat page; `POST /chat` `{sessionId?, message}` →
+`{sessionId, reply}`. Per-session history lives in memory (cleared on restart) and is
+isolated across sessions. Basic limits: a per-IP rate limit (429 when exceeded) and a
+max-context cap (history trimmed + input truncated). If Ollama is down, `/chat` returns a
+clean error and the server stays up.
+
+Configurable via env vars: `SERVICE_PORT` (8080), `SERVICE_HOST` (0.0.0.0),
+`SERVICE_RATE_LIMIT` (20/min), `SERVICE_MAX_HISTORY` (20), `SERVICE_MAX_INPUT_CHARS` (4000),
+plus the `OLLAMA_*` vars for the model.
+
+Because it binds `0.0.0.0`, another device on the LAN can reach it at
+`http://<this-machine-ip>:8080`. **VPS deploy** (manual, out of code scope): build a
+distribution (`./gradlew :app:installDist`), run it on a host with Ollama + a light model,
+set `SERVICE_HOST=0.0.0.0`, and open the port in the firewall.
+
 ## Architecture
 
 ```

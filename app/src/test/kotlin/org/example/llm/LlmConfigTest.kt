@@ -57,4 +57,22 @@ class LlmConfigTest {
         assertNull(config.maxTokens)
         assertNull(config.contextWindow)
     }
+
+    @Test
+    fun `optimized fills the unset generation fields with the tuned profile`() {
+        val config = LlmConfig().optimized() // all three fields unset
+
+        assertEquals(LlmConfig.OPTIMIZED_TEMPERATURE, config.temperature)
+        assertEquals(LlmConfig.OPTIMIZED_NUM_PREDICT, config.maxTokens)
+        assertEquals(LlmConfig.OPTIMIZED_NUM_CTX, config.contextWindow)
+    }
+
+    @Test
+    fun `optimized leaves already-set fields intact so env overrides win`() {
+        val config = LlmConfig(temperature = 0.7, maxTokens = 256, contextWindow = 8192).optimized()
+
+        assertEquals(0.7, config.temperature)
+        assertEquals(256, config.maxTokens)
+        assertEquals(8192, config.contextWindow)
+    }
 }
